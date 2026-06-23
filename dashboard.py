@@ -424,6 +424,13 @@ def draw_chart(df_weekly: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def _hex_to_rgba(hex_color: str, alpha: float = 0.13) -> str:
+    """#RRGGBB → rgba(r,g,b,alpha) 변환. Plotly fill에 사용."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def make_sparkline(series: pd.Series, color: str) -> go.Figure:
     """스파크라인: 작은 추이선 그래프 (축·레전드 없음)."""
     fig = go.Figure()
@@ -433,7 +440,7 @@ def make_sparkline(series: pd.Series, color: str) -> go.Figure:
         mode="lines",
         line=dict(color=color, width=2),
         fill="tozeroy",
-        fillcolor=color + "22",  # 색상 투명도 (hex 끝 22 ≈ 13%)
+        fillcolor=_hex_to_rgba(color, 0.13),
     ))
     fig.update_layout(
         height=55,
