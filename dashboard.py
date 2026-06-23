@@ -43,23 +43,58 @@ st.set_page_config(
 
 st.markdown("""
 <style>
+    /* ── 배경 ── */
     .stApp { background-color: #f8f9fc; }
+
+    /* ── KPI 카드 (3번 요청: 글씨 크게) ── */
     .kpi-card {
         background: white; border-radius: 14px;
-        padding: 22px 18px 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.07);
+        padding: 26px 20px 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.07);
         text-align: center;
     }
-    .kpi-label  { font-size:.85rem; color:#888; margin-bottom:8px; font-weight:500; }
-    .kpi-value  { font-size:2.3rem; font-weight:700; color:#1a1a2e; }
-    .kpi-target { font-size:.78rem; color:#bbb; margin-top:4px; }
+    .kpi-label  { font-size:1rem;  color:#555; margin-bottom:10px; font-weight:600; letter-spacing:.01em; }
+    .kpi-value  { font-size:3rem;  font-weight:800; color:#1a1a2e; line-height:1.1; }
+    .kpi-target { font-size:.88rem; color:#888; margin-top:8px; }
     .badge-pass { display:inline-block; background:#e8f5e9; color:#2e7d32;
-                  border-radius:20px; padding:5px 16px; font-weight:700; margin-top:8px; }
+                  border-radius:20px; padding:7px 20px; font-weight:700; font-size:1.05rem; margin-top:10px; }
     .badge-fail { display:inline-block; background:#fff3e0; color:#e65100;
-                  border-radius:20px; padding:5px 16px; font-weight:700; margin-top:8px; }
+                  border-radius:20px; padding:7px 20px; font-weight:700; font-size:1.05rem; margin-top:10px; }
+
+    /* ── 섹션 제목·그래프 라벨 ── */
     .section-title { font-size:1.15rem; font-weight:700; color:#1a1a2e; margin:0 0 4px 0; }
-    .src-naver { font-size:.82rem; color:#03c75a; font-weight:600; }
+    .src-naver  { font-size:.82rem; color:#03c75a; font-weight:600; }
     .src-google { font-size:.82rem; color:#ea4335; font-weight:600; }
     .chart-hint { font-size:.76rem; color:#bbb; margin-bottom:10px; }
+
+    /* ── 버튼 색상 (1번 요청) ──
+       primary = 파란 채우기 버튼 (추가·추적 등 평소 동작)
+       secondary = 회색 테두리 버튼 (칩 토글, 기타)
+       ✕ 삭제 버튼은 CSS로 빨강 테두리로 별도 표시
+    ── */
+    /* primary 버튼 → 파란색 (config.toml primaryColor와 일치) */
+    button[kind="primary"],
+    .stButton button[kind="primary"] {
+        background-color: #1565C0 !important;
+        border-color:     #1565C0 !important;
+        color: white !important;
+    }
+    button[kind="primary"]:hover,
+    .stButton button[kind="primary"]:hover {
+        background-color: #1976D2 !important;
+        border-color:     #1976D2 !important;
+    }
+
+    /* ✕ 버튼 — key가 chip_del_ 로 시작하는 버튼을 빨강 테두리로 */
+    div[data-testid*="chip_del"] button,
+    div[data-key*="chip_del"] button {
+        color: #c62828 !important;
+        border-color: #c62828 !important;
+        background: white !important;
+    }
+    div[data-testid*="chip_del"] button:hover,
+    div[data-key*="chip_del"] button:hover {
+        background: #ffebee !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -428,7 +463,8 @@ else:
 
             with cols[j * 2 + 1]:
                 if st.button("✕", key=f"chip_del_{kw}",
-                             help=f"'{kw}'를 추적 목록에서 완전 삭제"):
+                             help=f"'{kw}'를 추적 목록에서 완전 삭제",
+                             type="secondary"):
                     remove_tracked_keyword(kw)
                     st.session_state["hidden_kws"].discard(kw)
                     st.rerun()
