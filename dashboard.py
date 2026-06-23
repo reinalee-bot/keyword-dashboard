@@ -14,6 +14,7 @@ from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 import github_storage as gh
@@ -302,6 +303,58 @@ def draw_chart(df_weekly: pd.DataFrame) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def make_sparkline(series: pd.Series, color: str) -> go.Figure:
+    """스파크라인: 작은 추이선 그래프 (축·레전드 없음)."""
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=list(range(len(series))),
+        y=series.values,
+        mode="lines",
+        line=dict(color=color, width=2),
+        fill="tozeroy",
+        fillcolor=color + "22",  # 색상 투명도 (hex 끝 22 ≈ 13%)
+    ))
+    fig.update_layout(
+        height=55,
+        margin=dict(l=0, r=0, t=2, b=2),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=False,
+        xaxis=dict(visible=False, fixedrange=True),
+        yaxis=dict(visible=False, fixedrange=True),
+    )
+    return fig
+
+
+def compute_change(df_kw: pd.DataFrame) -> tuple:
+    """
+    기간 전반부 평균 대비 후반부 평균 변화율을 계산합니다.
+    반환: (변화율 % | None, 날짜순 ratio 시리즈)
+    """
+    if df_kw.empty:
+        return None, pd.Series(dtype=float)
+    s = df_kw.sort_values("date")["ratio"].reset_index(drop=True)
+    if len(s) < 4:
+        return None, s
+    half      = len(s) // 2
+    first_avg = s.iloc[:half].mean()
+    last_avg  = s.iloc[half:].mean()
+    if first_avg == 0:
+        change = None
+    else:
+        change = (last_avg - first_avg) / first_avg * 100
+    return change, s
+
+
+def change_badge(pct) -> str:
+    """변화율을 ▲/▼ 뱃지 HTML로 반환."""
+    if pct is None:
+        return "<span style='color:#aaa'>—</span>"
+    color = "#2e7d32" if pct >= 0 else "#c62828"
+    arrow = "▲" if pct >= 0 else "▼"
+    return f"<span style='color:{color};font-weight:700'>{arrow} {abs(pct):.0f}%</span>"
+
+
 # ──────────────────────────────────────────────────────
 # 뉴스 키워드 (1시간 캐시)
 # ──────────────────────────────────────────────────────
@@ -496,6 +549,22 @@ with col_add_btn:
 
 st.markdown("")
 
+# ── 기간 선택 버튼 (7일 / 30일 / 90일) ─────────────────
+if "period_days" not in st.session_state:
+    st.session_state["period_days"] = 30
+
+PERIOD_OPTIONS = {"7일": 7, "30일": 30, "90일": 90}
+p_cols = st.columns([1, 1, 1, 9])
+for col, (label, days) in zip(p_cols, PERIOD_OPTIONS.items()):
+    with col:
+        btn_type = "primary" if st.session_state["period_days"] == days else "secondary"
+        if st.button(label, key=f"period_{days}", type=btn_type, use_container_width=True):
+            st.session_state["period_days"] = days
+            st.rerun()
+
+period_days = st.session_state["period_days"]
+cutoff      = pd.Timestamp.today().normalize() - pd.Timedelta(days=period_days)
+
 # ── 주간 검색 관심도 그래프 (추적 키워드 중 숨김 제외) ─
 active_kws = [kw for kw in tracked_kws if kw not in st.session_state["hidden_kws"]]
 df_trends  = load_trends()
@@ -505,9 +574,9 @@ if df_trends.empty:
 elif not active_kws:
     st.info("모든 키워드가 숨김 상태입니다. 칩을 다시 클릭해서 복원하세요.")
 else:
-    df_filtered = df_trends[df_trends["keyword"].isin(active_kws)]
-    df_naver    = df_filtered[df_filtered["source"] == "naver"]
-    df_google   = df_filtered[df_filtered["source"] == "google"]
+    df_period   = df_trends[(df_trends["keyword"].isin(active_kws)) & (df_trends["date"] >= cutoff)]
+    df_naver    = df_period[df_period["source"] == "naver"]
+    df_google   = df_period[df_period["source"] == "google"]
 
     col_n, col_g = st.columns(2, gap="large")
     with col_n:
@@ -519,7 +588,7 @@ else:
                 s = df_naver.copy(); s["date"] = s["date"].dt.strftime("%Y-%m-%d")
                 st.dataframe(s[["keyword","date","ratio"]].rename(columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}).sort_values("날짜", ascending=False).head(40), use_container_width=True, hide_index=True)
         else:
-            st.info("추적 키워드의 네이버 데이터가 없습니다. '＋ 추가' 버튼으로 수집하세요.")
+            st.info("선택 기간에 네이버 데이터가 없습니다.")
 
     with col_g:
         st.markdown('<div class="src-google">🔴 구글 트렌드 — 검색 트렌드</div>', unsafe_allow_html=True)
@@ -530,9 +599,66 @@ else:
                 g = df_google.copy(); g["date"] = g["date"].dt.strftime("%Y-%m-%d")
                 st.dataframe(g[["keyword","date","ratio"]].rename(columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}).sort_values("날짜", ascending=False).head(40), use_container_width=True, hide_index=True)
         else:
-            st.info("추적 키워드의 구글 데이터가 없습니다. 다음 수집 시 자동으로 채워집니다.")
+            st.info("선택 기간에 구글 데이터가 없습니다.")
 
     st.caption("⚠️ 네이버(일별)와 구글(주별)은 집계 기준이 달라 직접 비교하지 마세요.")
+
+    # ── 키워드별 추이 요약 표 (스파크라인 + ▲▼) ────────────
+    st.markdown("")
+    st.markdown('<div class="section-title">📋 키워드별 추이 요약</div>', unsafe_allow_html=True)
+    st.caption(
+        f"최근 {period_days}일 · 기간 전반부 대비 후반부 변화 · "
+        "데이터가 부족한 경우 '데이터 부족' 표시"
+    )
+
+    # 헤더 행
+    hdr = st.columns([2.2, 3.5, 1.2, 3.5, 1.2])
+    for h, txt in zip(hdr, ["키워드", "🟢 네이버 추이", "변화", "🔴 구글 추이", "변화"]):
+        h.markdown(f"<span style='font-weight:700;color:#555;font-size:.85rem'>{txt}</span>",
+                   unsafe_allow_html=True)
+
+    st.markdown("<hr style='margin:4px 0 8px;border-color:#e0e0e0'>", unsafe_allow_html=True)
+
+    for kw in active_kws:
+        row_n = df_period[(df_period["keyword"] == kw) & (df_period["source"] == "naver")]
+        row_g = df_period[(df_period["keyword"] == kw) & (df_period["source"] == "google")]
+
+        c0, c1, c2, c3, c4 = st.columns([2.2, 3.5, 1.2, 3.5, 1.2])
+
+        with c0:
+            st.markdown(f"<span style='font-weight:600'>{kw}</span>", unsafe_allow_html=True)
+
+        with c1:
+            n_change, n_series = compute_change(row_n)
+            if len(n_series) >= 3:
+                st.plotly_chart(
+                    make_sparkline(n_series, "#03c75a"),
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                    key=f"spark_n_{kw}_{period_days}",
+                )
+            else:
+                st.caption("데이터 부족")
+
+        with c2:
+            st.markdown(change_badge(n_change), unsafe_allow_html=True)
+
+        with c3:
+            g_change, g_series = compute_change(row_g)
+            if len(g_series) >= 3:
+                st.plotly_chart(
+                    make_sparkline(g_series, "#ea4335"),
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                    key=f"spark_g_{kw}_{period_days}",
+                )
+            else:
+                st.caption("데이터 부족")
+
+        with c4:
+            st.markdown(change_badge(g_change), unsafe_allow_html=True)
+
+        st.markdown("<hr style='margin:4px 0;border-color:#f0f0f0'>", unsafe_allow_html=True)
 
 st.divider()
 
