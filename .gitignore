@@ -5,6 +5,9 @@
 # 네이버 API 키가 들어있는 파일
 .env
 
+# Streamlit 로컬 비밀 설정 (GitHub 토큰 포함)
+.streamlit/secrets.toml
+
 # 구글 클라우드 키 파일 (혹시 나중에 생겨도 자동 제외)
 credentials.json
 

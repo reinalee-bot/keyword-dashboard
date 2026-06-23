@@ -2,7 +2,10 @@
 키워드 트렌드 KPI 대시보드 — CSV 저장 방식
   data/trends.csv          : 네이버·구글 검색 트렌드 데이터
   data/derived_keywords.csv: 도출 키워드 관리 (반영 Y/N)
-나중에 GitHub에 올리면 팀과 데이터 공유 가능.
+
+GitHub 연동(GITHUB_TOKEN + GITHUB_REPO 설정 시):
+  - derived_keywords.csv 읽기·쓰기를 GitHub API로 처리
+  - 팀 누구나 '반영' 저장 → GitHub 커밋 → 영구 보존
 """
 
 import io
@@ -13,6 +16,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+import github_storage as gh
 from news_crawler import fetch_news_keywords
 
 # ──────────────────────────────────────────────────────
@@ -73,9 +77,20 @@ def ensure_data():
 
 
 # ──────────────────────────────────────────────────────
-# 도출 키워드 CSV CRUD
+# 도출 키워드 CSV CRUD — GitHub 연동 또는 로컬 파일
 # ──────────────────────────────────────────────────────
+
+@st.cache_data(ttl=30)
+def _load_derived_from_github() -> pd.DataFrame:
+    """GitHub에서 derived_keywords.csv를 읽습니다 (30초 캐시)."""
+    df = gh.read_csv("data/derived_keywords.csv")
+    return df if df is not None else pd.DataFrame(columns=DERIVED_COLS)
+
+
 def _read_derived_all() -> pd.DataFrame:
+    """도출 키워드 전체를 읽습니다 — GitHub 연동 시 GitHub에서, 아니면 로컬에서."""
+    if gh.is_configured():
+        return _load_derived_from_github()
     if not os.path.exists(DERIVED_CSV):
         return pd.DataFrame(columns=DERIVED_COLS)
     df = pd.read_csv(DERIVED_CSV, dtype=str)
@@ -85,9 +100,21 @@ def _read_derived_all() -> pd.DataFrame:
     return df
 
 
+def _write_derived(df: pd.DataFrame, message: str) -> bool:
+    """도출 키워드를 저장합니다 — GitHub 연동 시 GitHub에, 아니면 로컬에."""
+    if gh.is_configured():
+        ok = gh.write_csv(df, "data/derived_keywords.csv", message)
+        if ok:
+            _load_derived_from_github.clear()  # 캐시 초기화 → 다음 로드에서 fresh read
+        return ok
+    else:
+        df.to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+        return True
+
+
 def load_derived(month: str) -> pd.DataFrame:
     df = _read_derived_all()
-    df = df[df["kpi_month"] == month].copy()
+    df = df[df["kpi_month"] == month].copy() if "kpi_month" in df.columns else pd.DataFrame(columns=DERIVED_COLS)
     df["reflected"] = df["reflected"].astype(str).str.lower().isin(["1", "true", "yes"])
     df = df.rename(columns={
         "keyword": "키워드", "kpi_month": "월",
@@ -101,19 +128,19 @@ def load_derived_all_for_excel() -> pd.DataFrame:
 
 
 def add_keyword(keyword: str, month: str, source: str = "manual") -> bool:
-    df = _read_derived_all()
-    dup = ((df["keyword"] == keyword) & (df["kpi_month"] == month))
+    df  = _read_derived_all()
+    dup = ((df["keyword"] == keyword) & (df["kpi_month"] == month)) if len(df) > 0 else pd.Series([False])
     if dup.any():
         return False
     now     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     new_row = pd.DataFrame([[keyword, month, "0", source, now]], columns=DERIVED_COLS)
     df      = pd.concat([df, new_row], ignore_index=True)
-    df.to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+    _write_derived(df, f"키워드 추가: {keyword} ({month})")
     return True
 
 
 def save_reflected(df_display: pd.DataFrame):
-    """data_editor 결과(한글 컬럼)를 CSV에 반영"""
+    """data_editor 결과(한글 컬럼)를 저장 — GitHub 또는 로컬"""
     all_df = _read_derived_all()
     for _, row in df_display.iterrows():
         mask = (
@@ -121,13 +148,13 @@ def save_reflected(df_display: pd.DataFrame):
             (all_df["kpi_month"] == row["월"])
         )
         all_df.loc[mask, "reflected"] = "1" if row["반영"] else "0"
-    all_df.to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+    _write_derived(all_df, f"반영 상태 업데이트 ({datetime.now().strftime('%Y-%m-%d %H:%M')})")
 
 
 def delete_keyword(keyword: str, month: str):
     df = _read_derived_all()
     df = df[~((df["keyword"] == keyword) & (df["kpi_month"] == month))]
-    df.to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+    _write_derived(df, f"키워드 삭제: {keyword} ({month})")
 
 
 # ──────────────────────────────────────────────────────
@@ -224,10 +251,11 @@ ensure_data()
 
 # ── 헤더 ─────────────────────────────────────────────
 st.markdown("## 📊 키워드 트렌드 KPI 대시보드")
+_sync_status = "🔄 GitHub 자동 동기화 활성" if gh.is_configured() else "💾 로컬 저장 모드"
 st.caption(
     f"기준 월: **{CURRENT_MONTH}**  |  "
     f"마지막 업데이트: {datetime.now().strftime('%Y년 %m월 %d일 %H:%M')}  |  "
-    "데이터: 네이버 데이터랩 · 구글 트렌드"
+    f"데이터: 네이버 데이터랩 · 구글 트렌드  |  {_sync_status}"
 )
 st.divider()
 
@@ -379,7 +407,10 @@ else:
     with col_save:
         if st.button("💾 저장하기", use_container_width=True, type="primary"):
             save_reflected(edited_df)
-            st.success("저장됐습니다! KPI 카드가 업데이트됩니다.")
+            if gh.is_configured():
+                st.success("저장됐습니다! GitHub에 자동 커밋됐습니다. ✅")
+            else:
+                st.success("저장됐습니다! KPI 카드가 업데이트됩니다.")
             st.rerun()
 
     with col_del:
