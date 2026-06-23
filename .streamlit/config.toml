@@ -1,6 +1,6 @@
 [theme]
 # primary 버튼 색상을 파란색으로 설정 (기본값이 빨강이어서 변경)
-primaryColor = "#1565C0"
+primaryColor = "#2563EB"
 backgroundColor = "#f8f9fc"
 secondaryBackgroundColor = "#ffffff"
 textColor = "#1a1a2e"

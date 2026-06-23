@@ -37,65 +37,186 @@ TRACKED_COLS  = ["keyword", "added_at"]
 CURRENT_MONTH = datetime.today().strftime("%Y-%m")   # 예: "2026-06"
 
 st.set_page_config(
-    page_title="키워드 트렌드 대시보드",
+    page_title="키워드 인텔리전스 | SCK·STK",
     page_icon="📊",
     layout="wide",
 )
 
 st.markdown("""
 <style>
-    /* ── 배경 ── */
-    .stApp { background-color: #f8f9fc; }
+/* ────────────────────────────────────────────────
+   색상 변수 (전체 테마)
+   포인트: #2563EB (블루) 1개
+   배경:  #F8FAFC (거의 흰색)
+   텍스트: #0F172A (다크 네이비) / #64748B (보조) / #94A3B8 (힌트)
+   테두리: #E2E8F0 (연한 회색)
+──────────────────────────────────────────────── */
 
-    /* ── KPI 카드 (3번 요청: 글씨 크게) ── */
-    .kpi-card {
-        background: white; border-radius: 14px;
-        padding: 26px 20px 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.07);
-        text-align: center;
-    }
-    .kpi-label  { font-size:1rem;  color:#555; margin-bottom:10px; font-weight:600; letter-spacing:.01em; }
-    .kpi-value  { font-size:3rem;  font-weight:800; color:#1a1a2e; line-height:1.1; }
-    .kpi-target { font-size:.88rem; color:#888; margin-top:8px; }
-    .badge-pass { display:inline-block; background:#e8f5e9; color:#2e7d32;
-                  border-radius:20px; padding:7px 20px; font-weight:700; font-size:1.05rem; margin-top:10px; }
-    .badge-fail { display:inline-block; background:#fff3e0; color:#e65100;
-                  border-radius:20px; padding:7px 20px; font-weight:700; font-size:1.05rem; margin-top:10px; }
+/* ── Streamlit 기본 여백·헤더 제거 ── */
+#MainMenu { visibility: hidden; }
+footer    { visibility: hidden; }
+.stApp > header { display: none; }
+.block-container {
+    max-width: 1240px !important;
+    padding: 0 2.5rem 4rem !important;
+    margin: 0 auto !important;
+}
 
-    /* ── 섹션 제목·그래프 라벨 ── */
-    .section-title { font-size:1.15rem; font-weight:700; color:#1a1a2e; margin:0 0 4px 0; }
-    .src-naver  { font-size:.82rem; color:#03c75a; font-weight:600; }
-    .src-google { font-size:.82rem; color:#ea4335; font-weight:600; }
-    .chart-hint { font-size:.76rem; color:#bbb; margin-bottom:10px; }
+/* ── 전체 배경 ── */
+.stApp { background: #F8FAFC; }
 
-    /* ── 버튼 색상 (1번 요청) ──
-       primary = 파란 채우기 버튼 (추가·추적 등 평소 동작)
-       secondary = 회색 테두리 버튼 (칩 토글, 기타)
-       ✕ 삭제 버튼은 CSS로 빨강 테두리로 별도 표시
-    ── */
-    /* primary 버튼 → 파란색 (config.toml primaryColor와 일치) */
-    button[kind="primary"],
-    .stButton button[kind="primary"] {
-        background-color: #1565C0 !important;
-        border-color:     #1565C0 !important;
-        color: white !important;
-    }
-    button[kind="primary"]:hover,
-    .stButton button[kind="primary"]:hover {
-        background-color: #1976D2 !important;
-        border-color:     #1976D2 !important;
-    }
+/* ═══════════════════════════════════════
+   상단 헤더 바
+═══════════════════════════════════════ */
+.dash-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #ffffff;
+    border-bottom: 1px solid #E2E8F0;
+    padding: 14px 2.5rem;
+    margin: 0 -2.5rem 2rem -2.5rem;
+}
+.dash-logo {
+    display: flex; align-items: center; gap: 10px;
+}
+.dash-logo-mark {
+    width: 30px; height: 30px;
+    background: #2563EB;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 15px; font-weight: 700; line-height: 1;
+    flex-shrink: 0;
+}
+.dash-logo-text .dt { font-size: 15px; font-weight: 700; color: #0F172A; line-height: 1.2; }
+.dash-logo-text .ds { font-size: 11px; color: #94A3B8; line-height: 1.3; }
+.dash-meta {
+    display: flex; align-items: center; gap: 20px;
+    font-size: 12px; color: #64748B;
+}
+.dash-live {
+    display: flex; align-items: center; gap: 5px;
+    background: #F0FDF4; color: #166534;
+    padding: 4px 12px; border-radius: 20px;
+    font-weight: 600; font-size: 11px;
+}
+.dash-live::before {
+    content: "●"; font-size: 8px; color: #16A34A;
+}
 
-    /* ✕ 버튼 — key가 chip_del_ 로 시작하는 버튼을 빨강 테두리로 */
-    div[data-testid*="chip_del"] button,
-    div[data-key*="chip_del"] button {
-        color: #c62828 !important;
-        border-color: #c62828 !important;
-        background: white !important;
-    }
-    div[data-testid*="chip_del"] button:hover,
-    div[data-key*="chip_del"] button:hover {
-        background: #ffebee !important;
-    }
+/* ═══════════════════════════════════════
+   섹션 헤더
+═══════════════════════════════════════ */
+.sec-hdr {
+    border-left: 3px solid #2563EB;
+    padding-left: 12px;
+    margin: 0 0 14px 0;
+}
+.sec-hdr .sh-t {
+    font-size: 15px; font-weight: 700; color: #0F172A;
+    margin: 0; line-height: 1.3;
+}
+.sec-hdr .sh-s {
+    font-size: 12px; color: #94A3B8;
+    margin: 3px 0 0; line-height: 1.4;
+}
+
+/* ═══════════════════════════════════════
+   KPI 카드
+═══════════════════════════════════════ */
+.kpi-card {
+    background: white;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 20px 22px 18px;
+}
+.kpi-label {
+    font-size: 10.5px; font-weight: 700; color: #94A3B8;
+    text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px;
+}
+.kpi-value {
+    font-size: 2.6rem; font-weight: 700; color: #0F172A; line-height: 1;
+}
+.kpi-unit { font-size: .95rem; font-weight: 400; color: #94A3B8; margin-left: 3px; }
+.kpi-target { font-size: 12px; color: #94A3B8; margin-top: 8px; }
+.badge-pass {
+    display: inline-block; background: #F0FDF4; color: #166534;
+    border-radius: 6px; padding: 6px 16px; font-weight: 700; font-size: 14px; margin-top: 10px;
+}
+.badge-fail {
+    display: inline-block; background: #FFF7ED; color: #9A3412;
+    border-radius: 6px; padding: 6px 16px; font-weight: 700; font-size: 14px; margin-top: 10px;
+}
+
+/* ═══════════════════════════════════════
+   그래프 카드
+═══════════════════════════════════════ */
+.chart-card-wrap {
+    background: white; border: 1px solid #E2E8F0;
+    border-radius: 10px; padding: 16px 20px 8px;
+}
+.src-naver  { font-size: 12px; font-weight: 700; color: #059669; }
+.src-google { font-size: 12px; font-weight: 700; color: #DC2626; }
+.chart-hint { font-size: 11px; color: #94A3B8; margin: 2px 0 6px; }
+
+/* ═══════════════════════════════════════
+   발굴 키워드 카드
+═══════════════════════════════════════ */
+/* Streamlit border 컨테이너를 덮어씀 */
+div[data-testid="stContainer"] > div[data-testid="element-container"] > div {
+    border-radius: 8px !important;
+}
+
+/* ═══════════════════════════════════════
+   버튼
+═══════════════════════════════════════ */
+button[kind="primary"],
+.stButton button[kind="primary"] {
+    background-color: #2563EB !important;
+    border-color: #2563EB !important;
+    color: white !important;
+    border-radius: 7px !important;
+    font-weight: 600 !important;
+}
+button[kind="primary"]:hover,
+.stButton button[kind="primary"]:hover {
+    background-color: #1D4ED8 !important;
+    border-color: #1D4ED8 !important;
+}
+.stButton button[kind="secondary"] {
+    border-radius: 7px !important;
+    border-color: #E2E8F0 !important;
+    color: #374151 !important;
+}
+/* ✕ 삭제 버튼 */
+div[data-testid*="chip_del"] button,
+div[data-key*="chip_del"] button {
+    color: #DC2626 !important;
+    border-color: #FCA5A5 !important;
+    background: white !important;
+}
+div[data-testid*="chip_del"] button:hover,
+div[data-key*="chip_del"] button:hover {
+    background: #FEF2F2 !important;
+}
+
+/* ═══════════════════════════════════════
+   구분선·기타
+═══════════════════════════════════════ */
+hr { border-color: #E2E8F0 !important; margin: 1.5rem 0 !important; }
+.stProgress > div > div { background: #2563EB !important; }
+
+/* 섹션 간 여백 */
+.section-gap { margin-top: 2.5rem; }
+
+/* 스파크라인 표 헤더 */
+.spark-hdr {
+    font-size: 11px; font-weight: 700; color: #64748B;
+    text-transform: uppercase; letter-spacing: .05em;
+}
+
+/* 기존 section-title (하위 호환) */
+.section-title { font-size:1.1rem; font-weight:700; color:#0F172A; margin:0 0 4px 0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -404,15 +525,26 @@ def build_excel() -> bytes:
 # ══════════════════════════════════════════════════════
 ensure_data()
 
-# ── 헤더 ─────────────────────────────────────────────
-st.markdown("## 📊 키워드 트렌드 KPI 대시보드")
-_sync_status = "🔄 GitHub 자동 동기화 활성" if gh.is_configured() else "💾 로컬 저장 모드"
-st.caption(
-    f"기준 월: **{CURRENT_MONTH}**  |  "
-    f"마지막 업데이트: {datetime.now().strftime('%Y년 %m월 %d일 %H:%M')}  |  "
-    f"데이터: 네이버 데이터랩 · 구글 트렌드  |  {_sync_status}"
-)
-st.divider()
+# ── 헤더 바 ──────────────────────────────────────────
+_now_str    = datetime.now().strftime("%Y.%m.%d %H:%M")
+_sync_label = "GitHub 동기화" if gh.is_configured() else "로컬 모드"
+st.markdown(f"""
+<div class="dash-header">
+  <div class="dash-logo">
+    <div class="dash-logo-mark">K</div>
+    <div class="dash-logo-text">
+      <div class="dt">키워드 인텔리전스</div>
+      <div class="ds">IT·보안 키워드 트렌드 & KPI 대시보드 · SCK/STK Corp</div>
+    </div>
+  </div>
+  <div class="dash-meta">
+    <span>기준월 <strong>{CURRENT_MONTH}</strong></span>
+    <span>업데이트 {_now_str}</span>
+    <span>{_sync_label}</span>
+    <span class="dash-live">라이브</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ── KPI 자동 계산 ────────────────────────────────────
 df_cur          = load_derived(CURRENT_MONTH)
@@ -424,54 +556,53 @@ reflection_rate = round(KPI_REFLECTED / KPI_DERIVED * 100) if KPI_DERIVED > 0 el
 kpi_pass        = (KPI_DERIVED >= KPI_TARGET_D) and (reflection_rate >= KPI_TARGET_R)
 
 # ── KPI 카드 3개 ──────────────────────────────────────
-c1, c2, c3 = st.columns(3, gap="large")
+c1, c2, c3 = st.columns(3, gap="medium")
 
 with c1:
+    pct1 = min(int(KPI_DERIVED / KPI_TARGET_D * 100), 100)
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="kpi-label">이번 달 도출 키워드 수</div>
-        <div class="kpi-value">{KPI_DERIVED}<span style="font-size:1rem;color:#aaa"> 건</span></div>
-        <div class="kpi-target">목표 {KPI_TARGET_D}건</div>
+      <div class="kpi-label">이번 달 도출 키워드</div>
+      <div class="kpi-value">{KPI_DERIVED}<span class="kpi-unit">건</span></div>
+      <div class="kpi-target">목표 {KPI_TARGET_D}건 · 달성률 {pct1}%</div>
     </div>""", unsafe_allow_html=True)
-    st.progress(min(KPI_DERIVED / KPI_TARGET_D, 1.0),
-                text=f"목표 대비 {min(int(KPI_DERIVED/KPI_TARGET_D*100),100)}%")
+    st.progress(min(KPI_DERIVED / KPI_TARGET_D, 1.0))
 
 with c2:
+    pct2 = min(int(reflection_rate / KPI_TARGET_R * 100), 100)
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="kpi-label">키워드 반영률</div>
-        <div class="kpi-value">{reflection_rate}<span style="font-size:1rem;color:#aaa"> %</span></div>
-        <div class="kpi-target">목표 {KPI_TARGET_R}%  (반영 {KPI_REFLECTED} / 도출 {KPI_DERIVED}건)</div>
+      <div class="kpi-label">키워드 반영률</div>
+      <div class="kpi-value">{reflection_rate}<span class="kpi-unit">%</span></div>
+      <div class="kpi-target">목표 {KPI_TARGET_R}% · 반영 {KPI_REFLECTED} / 도출 {KPI_DERIVED}건</div>
     </div>""", unsafe_allow_html=True)
-    st.progress(min(reflection_rate / KPI_TARGET_R, 1.0),
-                text=f"목표 대비 {min(int(reflection_rate/KPI_TARGET_R*100),100)}%")
+    st.progress(min(reflection_rate / KPI_TARGET_R, 1.0))
 
 with c3:
     badge_cls  = "badge-pass" if kpi_pass else "badge-fail"
-    badge_text = "✅ 달성" if kpi_pass else "⏳ 진행 중"
-    hint = "두 목표 모두 달성!" if kpi_pass else (
-        f"도출 {max(KPI_TARGET_D-KPI_DERIVED,0)}건 더 필요 · "
-        f"반영률 {max(KPI_TARGET_R-reflection_rate,0)}%p 더 필요"
+    badge_text = "달성" if kpi_pass else "진행 중"
+    hint = "도출·반영 두 목표 모두 달성" if kpi_pass else (
+        f"도출 {max(KPI_TARGET_D-KPI_DERIVED,0)}건 · "
+        f"반영률 {max(KPI_TARGET_R-reflection_rate,0)}%p 부족"
     )
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="kpi-label">이번 달 KPI 달성 여부</div>
-        <div style="margin-top:10px">
-            <span class="{badge_cls}">{badge_text}</span>
-        </div>
-        <div class="kpi-target" style="margin-top:12px">{hint}</div>
+      <div class="kpi-label">이번 달 KPI</div>
+      <span class="{badge_cls}">{badge_text}</span>
+      <div class="kpi-target" style="margin-top:12px">{hint}</div>
     </div>""", unsafe_allow_html=True)
-    st.progress(1.0 if kpi_pass else max(reflection_rate/100, 0.05),
-                text="달성!" if kpi_pass else "미달성")
+    st.progress(1.0 if kpi_pass else max(reflection_rate / 100, 0.03))
 
-st.divider()
+st.markdown("<div style='margin-top:2rem'></div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
 # 섹션 1: 내 추적 키워드 관리 + 그래프
 # ══════════════════════════════════════════════════════
-st.markdown('<div class="section-title">🎯 내 추적 키워드 — 네이버·구글 그래프에 반영됩니다</div>',
-            unsafe_allow_html=True)
-st.caption("키워드를 추가하면 즉시 데이터를 수집하고 아래 그래프에 반영됩니다.")
+st.markdown("""
+<div class="sec-hdr">
+  <div class="sh-t">추적 키워드</div>
+  <div class="sh-s">칩 클릭 → 그래프 숨김/복원 &nbsp;·&nbsp; ✕ → 목록에서 삭제 &nbsp;·&nbsp; 추가하면 즉시 데이터 수집</div>
+</div>""", unsafe_allow_html=True)
 
 tracked_kws = load_tracked_keywords()
 
@@ -482,10 +613,6 @@ if "hidden_kws" not in st.session_state:
 st.session_state["hidden_kws"] &= set(tracked_kws)
 
 # ── 칩 렌더링 ─────────────────────────────────────────
-st.caption(
-    "**칩 클릭** → 그래프에서 잠깐 숨김 / 다시 클릭 → 복원  ·  "
-    "**✕** → 추적 목록에서 완전 삭제"
-)
 
 if not tracked_kws:
     st.info("추적 중인 키워드가 없습니다. 아래에서 추가해 주세요.")
@@ -578,10 +705,10 @@ else:
     df_naver    = df_period[df_period["source"] == "naver"]
     df_google   = df_period[df_period["source"] == "google"]
 
-    col_n, col_g = st.columns(2, gap="large")
+    col_n, col_g = st.columns(2, gap="medium")
     with col_n:
-        st.markdown('<div class="src-naver">🟢 네이버 데이터랩 — 검색 트렌드</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-hint">국내 검색 기준 · 0~100 상대 지수 · 인스타그램 콘텐츠 기획 참고</div>', unsafe_allow_html=True)
+        st.markdown('<div class="src-naver">네이버 데이터랩 — 검색 트렌드</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-hint">국내 검색 기준 · 0~100 상대 지수 · 인스타그램 기획 참고</div>', unsafe_allow_html=True)
         if not df_naver.empty:
             draw_chart(to_weekly(df_naver))
             with st.expander("네이버 원본 데이터"):
@@ -591,8 +718,8 @@ else:
             st.info("선택 기간에 네이버 데이터가 없습니다.")
 
     with col_g:
-        st.markdown('<div class="src-google">🔴 구글 트렌드 — 검색 트렌드</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-hint">국내·글로벌 검색 기준 · 0~100 상대 지수 · 링크드인 콘텐츠 기획 참고</div>', unsafe_allow_html=True)
+        st.markdown('<div class="src-google">구글 트렌드 — 검색 트렌드</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-hint">국내·글로벌 검색 기준 · 0~100 상대 지수 · 링크드인 기획 참고</div>', unsafe_allow_html=True)
         if not df_google.empty:
             draw_chart(to_weekly(df_google))
             with st.expander("구글 원본 데이터"):
@@ -604,20 +731,19 @@ else:
     st.caption("⚠️ 네이버(일별)와 구글(주별)은 집계 기준이 달라 직접 비교하지 마세요.")
 
     # ── 키워드별 추이 요약 표 (스파크라인 + ▲▼) ────────────
-    st.markdown("")
-    st.markdown('<div class="section-title">📋 키워드별 추이 요약</div>', unsafe_allow_html=True)
-    st.caption(
-        f"최근 {period_days}일 · 기간 전반부 대비 후반부 변화 · "
-        "데이터가 부족한 경우 '데이터 부족' 표시"
-    )
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+<div class="sec-hdr">
+  <div class="sh-t">키워드별 추이 요약</div>
+  <div class="sh-s">최근 {period_days}일 · 전반부 대비 후반부 변화율 · 데이터 부족 시 표시</div>
+</div>""", unsafe_allow_html=True)
 
     # 헤더 행
     hdr = st.columns([2.2, 3.5, 1.2, 3.5, 1.2])
-    for h, txt in zip(hdr, ["키워드", "🟢 네이버 추이", "변화", "🔴 구글 추이", "변화"]):
-        h.markdown(f"<span style='font-weight:700;color:#555;font-size:.85rem'>{txt}</span>",
-                   unsafe_allow_html=True)
+    for h, txt in zip(hdr, ["키워드", "네이버 추이", "변화", "구글 추이", "변화"]):
+        h.markdown(f"<span class='spark-hdr'>{txt}</span>", unsafe_allow_html=True)
 
-    st.markdown("<hr style='margin:4px 0 8px;border-color:#e0e0e0'>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:4px 0 8px;'>", unsafe_allow_html=True)
 
     for kw in active_kws:
         row_n = df_period[(df_period["keyword"] == kw) & (df_period["source"] == "naver")]
@@ -660,18 +786,16 @@ else:
 
         st.markdown("<hr style='margin:4px 0;border-color:#f0f0f0'>", unsafe_allow_html=True)
 
-st.divider()
+st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
 # 섹션 2: 이번 주 급상승 키워드 발굴
 # ══════════════════════════════════════════════════════
-st.markdown(
-    '<div class="section-title">🔥 이번 주 급상승 키워드 발굴'
-    '<span style="font-size:.8rem;color:#888;font-weight:400;margin-left:10px">'
-    '구글 뉴스 기사 빈도 기반 (위 그래프의 네이버·구글 검색 트렌드와 다릅니다)'
-    '</span></div>',
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<div class="sec-hdr">
+  <div class="sh-t">급상승 키워드 발굴</div>
+  <div class="sh-s">구글 뉴스 기사 빈도 기반 · 매 시간 자동 갱신 · 위 검색 트렌드 그래프와 별개입니다</div>
+</div>""", unsafe_allow_html=True)
 
 with st.spinner("IT 뉴스에서 키워드를 분석 중…"):
     news_kws, sources_ok = get_news_keywords()
@@ -731,9 +855,11 @@ with st.expander("✏️ 도출 키워드 직접 입력해서 추가하기"):
             else:
                 st.warning("키워드를 입력해 주세요.")
 
-st.divider()
-st.caption(
-    f"ⓒ keyword-dashboard  ·  기준 월: {CURRENT_MONTH}  ·  "
-    f"저장 위치: data/trends.csv ({len(pd.read_csv(TRENDS_CSV))}건)"
-    if os.path.exists(TRENDS_CSV) else f"ⓒ keyword-dashboard  ·  기준 월: {CURRENT_MONTH}"
-)
+_trend_cnt = len(pd.read_csv(TRENDS_CSV)) if os.path.exists(TRENDS_CSV) else 0
+st.markdown(f"""
+<div style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid #E2E8F0;
+            display:flex;justify-content:space-between;align-items:center;
+            font-size:11px;color:#94A3B8;">
+  <span>키워드 인텔리전스 · SCK/STK Corp · {CURRENT_MONTH}</span>
+  <span>데이터 {_trend_cnt:,}건 · 네이버 데이터랩 · 구글 트렌드</span>
+</div>""", unsafe_allow_html=True)
