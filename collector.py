@@ -227,5 +227,57 @@ def collect_all():
     print()
 
 
+def collect_single_keyword(keyword: str) -> tuple:
+    """
+    단일 키워드를 즉시 수집합니다 (새 추적 키워드 추가 시 사용).
+    반환: (naver_ok: bool, google_ok: bool)
+    """
+    naver_ok  = False
+    google_ok = False
+
+    # ── 네이버 ──────────────────────────────────────────
+    if CLIENT_ID and CLIENT_SECRET:
+        try:
+            end_dt   = datetime.today()
+            start_dt = end_dt - timedelta(days=30)
+            results  = _naver_fetch_batch(
+                [keyword],
+                start_dt.strftime("%Y-%m-%d"),
+                end_dt.strftime("%Y-%m-%d"),
+            )
+            records = [
+                (r["title"], pt["period"], pt["ratio"], "naver")
+                for r in results
+                for pt in r.get("data", [])
+            ]
+            if records:
+                ins, _ = save(records)
+                naver_ok = ins > 0
+        except Exception:
+            pass
+
+    # ── 구글 (차단될 수 있어 예외를 조용히 처리) ──────────
+    try:
+        from pytrends.request import TrendReq
+        pytrends = TrendReq(hl="ko-KR", tz=540, timeout=(10, 25), retries=1, backoff_factor=0.5)
+        pytrends.build_payload([keyword], timeframe="today 3-m", geo="KR")
+        df = pytrends.interest_over_time()
+        if not df.empty:
+            if "isPartial" in df.columns:
+                df = df.drop(columns=["isPartial"])
+            if keyword in df.columns:
+                records = [
+                    (keyword, idx.strftime("%Y-%m-%d"), float(val), "google")
+                    for idx, val in df[keyword].items()
+                ]
+                if records:
+                    ins, _ = save(records)
+                    google_ok = ins > 0
+    except Exception:
+        pass
+
+    return naver_ok, google_ok
+
+
 if __name__ == "__main__":
     collect_all()

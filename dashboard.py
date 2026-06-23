@@ -18,6 +18,7 @@ import streamlit as st
 
 import github_storage as gh
 from news_crawler import fetch_news_keywords
+from collector import collect_single_keyword
 
 # ──────────────────────────────────────────────────────
 # 경로 설정
@@ -27,8 +28,10 @@ DATA_DIR     = os.path.join(BASE_DIR, "data")
 TRENDS_CSV   = os.path.join(DATA_DIR, "trends.csv")
 DERIVED_CSV  = os.path.join(DATA_DIR, "derived_keywords.csv")
 
-DERIVED_COLS = ["keyword", "kpi_month", "reflected", "source", "added_at"]
-TRENDS_COLS  = ["keyword", "date", "ratio", "source", "collected_at"]
+DERIVED_COLS  = ["keyword", "kpi_month", "reflected", "source", "added_at"]
+TRENDS_COLS   = ["keyword", "date", "ratio", "source", "collected_at"]
+TRACKED_CSV   = os.path.join(DATA_DIR, "tracked_keywords.csv")
+TRACKED_COLS  = ["keyword", "added_at"]
 
 CURRENT_MONTH = datetime.today().strftime("%Y-%m")   # 예: "2026-06"
 
@@ -74,6 +77,16 @@ def ensure_data():
         pd.DataFrame(columns=DERIVED_COLS).to_csv(
             DERIVED_CSV, index=False, encoding="utf-8-sig"
         )
+    # 추적 키워드 초기값: keywords.py에서 가져옴
+    if not os.path.exists(TRACKED_CSV):
+        try:
+            from keywords import KEYWORDS as _default_kws
+        except ImportError:
+            _default_kws = []
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        pd.DataFrame(
+            [[kw, now] for kw in _default_kws], columns=TRACKED_COLS
+        ).to_csv(TRACKED_CSV, index=False, encoding="utf-8-sig")
 
 
 # ──────────────────────────────────────────────────────
@@ -155,6 +168,60 @@ def delete_keyword(keyword: str, month: str):
     df = _read_derived_all()
     df = df[~((df["keyword"] == keyword) & (df["kpi_month"] == month))]
     _write_derived(df, f"키워드 삭제: {keyword} ({month})")
+
+
+# ──────────────────────────────────────────────────────
+# 추적 키워드 CRUD — GitHub 연동 또는 로컬 파일
+# ──────────────────────────────────────────────────────
+
+@st.cache_data(ttl=30)
+def _load_tracked_from_github() -> pd.DataFrame:
+    df = gh.read_csv("data/tracked_keywords.csv")
+    return df if df is not None else pd.DataFrame(columns=TRACKED_COLS)
+
+
+def _read_tracked_all() -> pd.DataFrame:
+    if gh.is_configured():
+        return _load_tracked_from_github()
+    if not os.path.exists(TRACKED_CSV):
+        ensure_data()
+    df = pd.read_csv(TRACKED_CSV, dtype=str)
+    for col in TRACKED_COLS:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
+def _write_tracked(df: pd.DataFrame, message: str):
+    if gh.is_configured():
+        ok = gh.write_csv(df, "data/tracked_keywords.csv", message)
+        if ok:
+            _load_tracked_from_github.clear()
+    else:
+        df.to_csv(TRACKED_CSV, index=False, encoding="utf-8-sig")
+
+
+def load_tracked_keywords() -> list:
+    df = _read_tracked_all()
+    return df["keyword"].dropna().tolist() if not df.empty else []
+
+
+def add_tracked_keyword(keyword: str) -> bool:
+    """추적 키워드 추가. 중복이면 False 반환."""
+    df = _read_tracked_all()
+    if keyword in df["keyword"].tolist():
+        return False
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_row = pd.DataFrame([[keyword, now]], columns=TRACKED_COLS)
+    df = pd.concat([df, new_row], ignore_index=True)
+    _write_tracked(df, f"추적 키워드 추가: {keyword}")
+    return True
+
+
+def remove_tracked_keyword(keyword: str):
+    df = _read_tracked_all()
+    df = df[df["keyword"] != keyword]
+    _write_tracked(df, f"추적 키워드 삭제: {keyword}")
 
 
 # ──────────────────────────────────────────────────────
@@ -312,198 +379,176 @@ with c3:
 st.divider()
 
 # ══════════════════════════════════════════════════════
-# 섹션 1: 이번 주 급상승 키워드
+# 섹션 1: 내 추적 키워드 관리 + 그래프
 # ══════════════════════════════════════════════════════
-st.markdown('<div class="section-title">🔥 이번 주 급상승 키워드 — IT 뉴스 기반 자동 탐지</div>',
+st.markdown('<div class="section-title">🎯 내 추적 키워드 — 네이버·구글 그래프에 반영됩니다</div>',
             unsafe_allow_html=True)
+st.caption("키워드를 추가하면 즉시 데이터를 수집하고 아래 그래프에 반영됩니다.")
 
-with st.spinner("IT 뉴스에서 키워드를 불러오는 중..."):
+tracked_kws = load_tracked_keywords()
+
+# 칩(태그) 형태로 현재 추적 키워드 표시
+if tracked_kws:
+    chip_html = " ".join(
+        f'<span style="display:inline-block;background:#e8f0fe;color:#1a73e8;'
+        f'border-radius:20px;padding:4px 14px;font-weight:600;font-size:.9rem;'
+        f'margin:3px 4px 3px 0;">{kw}</span>'
+        for kw in tracked_kws
+    )
+    st.markdown(chip_html, unsafe_allow_html=True)
+else:
+    st.info("추적 중인 키워드가 없습니다. 아래에서 추가해 주세요.")
+
+# 추가 / 삭제 UI
+col_add_in, col_add_btn, col_spacer, col_del_sel, col_del_btn = st.columns([3, 1, 0.3, 2.5, 1.2])
+
+with col_add_in:
+    new_track_kw = st.text_input(
+        "새 추적 키워드", placeholder="예: 제로트러스트",
+        label_visibility="collapsed", key="new_track_input",
+    )
+with col_add_btn:
+    if st.button("＋ 추가", use_container_width=True, type="primary", key="btn_track_add"):
+        kw = new_track_kw.strip()
+        if not kw:
+            st.warning("키워드를 입력해 주세요.")
+        elif not add_tracked_keyword(kw):
+            st.info(f"'{kw}'는 이미 추적 중입니다.")
+        else:
+            with st.spinner(f"'{kw}' 데이터 수집 중…"):
+                naver_ok, google_ok = collect_single_keyword(kw)
+                load_trends.clear()
+            msgs = []
+            msgs.append("네이버 ✅" if naver_ok else "네이버 ⚠️ (키 확인 필요)")
+            msgs.append("구글 ✅" if google_ok else "구글은 다음 수집 때 채워집니다")
+            st.success(f"'{kw}' 추가 완료 — {' / '.join(msgs)}")
+            st.rerun()
+
+with col_del_sel:
+    kw_to_remove = st.selectbox(
+        "삭제할 키워드", ["(선택)"] + tracked_kws,
+        label_visibility="collapsed", key="sel_track_del",
+    )
+with col_del_btn:
+    if kw_to_remove != "(선택)":
+        if st.button("🗑 삭제", use_container_width=True, key="btn_track_del"):
+            remove_tracked_keyword(kw_to_remove)
+            st.success(f"'{kw_to_remove}' 추적 중지됐습니다.")
+            st.rerun()
+
+st.markdown("")
+
+# 주간 검색 관심도 그래프 (추적 키워드 필터)
+df_trends = load_trends()
+
+if df_trends.empty:
+    st.warning("data/trends.csv 에 데이터가 없습니다. 터미널에서 `python collector.py` 를 먼저 실행해 주세요.")
+elif not tracked_kws:
+    st.info("추적 키워드를 추가하면 그래프가 나타납니다.")
+else:
+    df_filtered = df_trends[df_trends["keyword"].isin(tracked_kws)]
+    df_naver    = df_filtered[df_filtered["source"] == "naver"]
+    df_google   = df_filtered[df_filtered["source"] == "google"]
+
+    col_n, col_g = st.columns(2, gap="large")
+    with col_n:
+        st.markdown('<div class="src-naver">🟢 네이버 데이터랩 — 검색 트렌드</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-hint">국내 검색 기준 · 0~100 상대 지수 · 인스타그램 콘텐츠 기획 참고</div>', unsafe_allow_html=True)
+        if not df_naver.empty:
+            draw_chart(to_weekly(df_naver))
+            with st.expander("네이버 원본 데이터"):
+                s = df_naver.copy(); s["date"] = s["date"].dt.strftime("%Y-%m-%d")
+                st.dataframe(s[["keyword","date","ratio"]].rename(columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}).sort_values("날짜", ascending=False).head(40), use_container_width=True, hide_index=True)
+        else:
+            st.info("추적 키워드의 네이버 데이터가 없습니다. '＋ 추가' 버튼으로 수집하세요.")
+
+    with col_g:
+        st.markdown('<div class="src-google">🔴 구글 트렌드 — 검색 트렌드</div>', unsafe_allow_html=True)
+        st.markdown('<div class="chart-hint">국내·글로벌 검색 기준 · 0~100 상대 지수 · 링크드인 콘텐츠 기획 참고</div>', unsafe_allow_html=True)
+        if not df_google.empty:
+            draw_chart(to_weekly(df_google))
+            with st.expander("구글 원본 데이터"):
+                g = df_google.copy(); g["date"] = g["date"].dt.strftime("%Y-%m-%d")
+                st.dataframe(g[["keyword","date","ratio"]].rename(columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}).sort_values("날짜", ascending=False).head(40), use_container_width=True, hide_index=True)
+        else:
+            st.info("추적 키워드의 구글 데이터가 없습니다. 다음 수집 시 자동으로 채워집니다.")
+
+    st.caption("⚠️ 네이버(일별)와 구글(주별)은 집계 기준이 달라 직접 비교하지 마세요.")
+
+st.divider()
+
+# ══════════════════════════════════════════════════════
+# 섹션 2: 이번 주 급상승 키워드 발굴
+# ══════════════════════════════════════════════════════
+st.markdown(
+    '<div class="section-title">🔥 이번 주 급상승 키워드 발굴'
+    '<span style="font-size:.8rem;color:#888;font-weight:400;margin-left:10px">'
+    '구글 뉴스 기사 빈도 기반 (위 그래프의 네이버·구글 검색 트렌드와 다릅니다)'
+    '</span></div>',
+    unsafe_allow_html=True,
+)
+
+with st.spinner("IT 뉴스에서 키워드를 분석 중…"):
     news_kws, sources_ok = get_news_keywords()
 
-if news_kws:
-    st.caption(f"출처: {sources_ok}  |  1시간마다 자동 갱신")
-else:
-    st.caption("뉴스에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.")
+st.caption(f"📰 {sources_ok}  |  1시간마다 자동 갱신" if news_kws else "뉴스에 연결하지 못했습니다.")
 
 if news_kws:
-    already_added = set(df_cur["키워드"].tolist()) if not df_cur.empty else set()
-    cols_per_row  = 4
-    rows          = [news_kws[i:i+cols_per_row] for i in range(0, len(news_kws), cols_per_row)]
+    tracked_set  = set(tracked_kws)
+    derived_set  = set(df_cur["키워드"].tolist()) if not df_cur.empty else set()
+    cols_per_row = 4
+    rows         = [news_kws[i:i+cols_per_row] for i in range(0, len(news_kws), cols_per_row)]
 
     for row in rows:
         cols = st.columns(cols_per_row, gap="small")
         for col, (word, count) in zip(cols, row):
             with col:
                 with st.container(border=True):
-                    already = word in already_added
+                    is_tracking = word in tracked_set
+                    is_derived  = word in derived_set
                     st.markdown(
-                        f"**{word}** &nbsp; <span style='color:#aaa;font-size:.8rem'>{count}회</span>",
+                        f"**{word}** &nbsp;<span style='color:#aaa;font-size:.8rem'>{count}회</span>",
                         unsafe_allow_html=True,
                     )
-                    if already:
-                        st.caption("✅ 이미 도출됨")
+                    if is_tracking:
+                        st.caption("📌 추적 중")
                     else:
-                        if st.button("＋ 도출에 추가", key=f"news_{word}",
-                                     use_container_width=True):
+                        if st.button("📌 추적에 추가", key=f"track_{word}",
+                                     use_container_width=True, type="primary"):
+                            add_tracked_keyword(word)
+                            with st.spinner(f"'{word}' 수집 중…"):
+                                naver_ok, google_ok = collect_single_keyword(word)
+                                load_trends.clear()
+                            msg  = "네이버 ✅" if naver_ok else "네이버 ⚠️"
+                            msg += " / 구글 ✅" if google_ok else " / 구글은 다음 수집 때"
+                            st.success(f"'{word}' 추적 시작! {msg}")
+                            st.rerun()
+                    if not is_derived:
+                        if st.button("＋ 도출에 추가", key=f"derive_{word}", use_container_width=True):
                             ok = add_keyword(word, CURRENT_MONTH, source="뉴스 자동탐지")
-                            if ok:
-                                st.success(f"'{word}' 추가!")
-                                st.rerun()
-                            else:
-                                st.info("이미 추가됨")
+                            st.success(f"'{word}' 도출 추가!") if ok else st.info("이미 도출됨")
+                            if ok: st.rerun()
+                    else:
+                        st.caption("✅ 도출됨")
 else:
     st.info("뉴스 데이터를 불러오지 못했습니다.")
 
-with st.expander("✏️ 키워드 직접 입력해서 추가하기"):
+with st.expander("✏️ 도출 키워드 직접 입력해서 추가하기"):
     col_input, col_btn = st.columns([4, 1])
     with col_input:
-        manual_kw = st.text_input("키워드 입력", placeholder="예: 제로트러스트",
-                                  label_visibility="collapsed")
+        manual_kw = st.text_input("키워드 입력", placeholder="예: 제로트러스트", label_visibility="collapsed")
     with col_btn:
         if st.button("추가", use_container_width=True):
             if manual_kw.strip():
                 ok = add_keyword(manual_kw.strip(), CURRENT_MONTH, source="직접 입력")
-                if ok:
-                    st.success(f"'{manual_kw.strip()}' 추가됐습니다!")
-                    st.rerun()
-                else:
-                    st.warning("이미 추가된 키워드입니다.")
+                st.success(f"'{manual_kw.strip()}' 추가됐습니다!") if ok else st.warning("이미 추가된 키워드입니다.")
+                if ok: st.rerun()
             else:
                 st.warning("키워드를 입력해 주세요.")
 
 st.divider()
-
-# ══════════════════════════════════════════════════════
-# 섹션 2: 도출 키워드 관리
-# ══════════════════════════════════════════════════════
-st.markdown('<div class="section-title">📋 도출 키워드 관리 — 반영 여부 체크</div>',
-            unsafe_allow_html=True)
-st.caption(
-    f"{CURRENT_MONTH} 기준  |  '반영' 체크박스를 클릭한 뒤 💾 저장하기를 누르면 "
-    "KPI 카드가 업데이트됩니다."
-)
-
-df_cur_fresh = load_derived(CURRENT_MONTH)
-
-if df_cur_fresh.empty:
-    st.info("아직 도출된 키워드가 없습니다. 위에서 '＋ 도출에 추가' 버튼을 눌러 추가해 주세요.")
-else:
-    edited_df = st.data_editor(
-        df_cur_fresh,
-        column_config={
-            "키워드": st.column_config.TextColumn("키워드",  disabled=True),
-            "월":    st.column_config.TextColumn("월",     disabled=True),
-            "반영":  st.column_config.CheckboxColumn("반영 (클릭으로 변경)", default=False),
-            "출처":  st.column_config.TextColumn("출처",   disabled=True),
-            "도출일": st.column_config.TextColumn("도출일", disabled=True),
-        },
-        hide_index=True,
-        use_container_width=True,
-        key="kw_editor",
-    )
-
-    col_save, col_del, col_excel = st.columns([2, 2, 5])
-
-    with col_save:
-        if st.button("💾 저장하기", use_container_width=True, type="primary"):
-            save_reflected(edited_df)
-            if gh.is_configured():
-                st.success("저장됐습니다! GitHub에 자동 커밋됐습니다. ✅")
-            else:
-                st.success("저장됐습니다! KPI 카드가 업데이트됩니다.")
-            st.rerun()
-
-    with col_del:
-        kw_to_del = st.selectbox(
-            "삭제",
-            ["(선택)"] + df_cur_fresh["키워드"].tolist(),
-            label_visibility="collapsed",
-        )
-        if kw_to_del != "(선택)":
-            if st.button(f"🗑 '{kw_to_del}' 삭제", use_container_width=True):
-                delete_keyword(kw_to_del, CURRENT_MONTH)
-                st.success(f"'{kw_to_del}' 삭제됐습니다.")
-                st.rerun()
-
-    with col_excel:
-        excel_bytes = build_excel()
-        st.download_button(
-            label="📥 엑셀로 내보내기 (.xlsx)",
-            data=excel_bytes,
-            file_name=f"KPI_키워드_{CURRENT_MONTH}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-        st.caption("→ 월별 KPI 요약 + 키워드 상세 두 시트가 함께 저장됩니다.")
-
-st.divider()
-
-# ══════════════════════════════════════════════════════
-# 섹션 3: 주간 검색 관심도 그래프
-# ══════════════════════════════════════════════════════
-st.markdown('<div class="section-title">📈 추적 키워드 주간 검색 관심도</div>',
-            unsafe_allow_html=True)
-
-df_trends = load_trends()
-
-if df_trends.empty:
-    st.warning(
-        "data/trends.csv 에 데이터가 없습니다. "
-        "터미널에서 `python collector.py` 를 먼저 실행해 주세요."
-    )
-else:
-    df_naver  = df_trends[df_trends["source"] == "naver"]
-    df_google = df_trends[df_trends["source"] == "google"]
-
-    col_n, col_g = st.columns(2, gap="large")
-
-    with col_n:
-        st.markdown('<div class="src-naver">🟢 네이버 데이터랩</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="chart-hint">인스타그램 콘텐츠 기획 참고용 · 국내 검색 기준 · 0~100 상대 지수</div>',
-            unsafe_allow_html=True,
-        )
-        if not df_naver.empty:
-            draw_chart(to_weekly(df_naver))
-            with st.expander("네이버 원본 데이터"):
-                s = df_naver.copy()
-                s["date"] = s["date"].dt.strftime("%Y-%m-%d")
-                st.dataframe(
-                    s[["keyword","date","ratio"]].rename(
-                        columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}
-                    ).sort_values("날짜", ascending=False).head(40),
-                    use_container_width=True, hide_index=True,
-                )
-        else:
-            st.info("네이버 데이터 없음")
-
-    with col_g:
-        st.markdown('<div class="src-google">🔴 구글 트렌드</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="chart-hint">링크드인 콘텐츠 기획 참고용 · 글로벌·국내 검색 기준 · 0~100 상대 지수</div>',
-            unsafe_allow_html=True,
-        )
-        if not df_google.empty:
-            draw_chart(to_weekly(df_google))
-            with st.expander("구글 원본 데이터"):
-                g = df_google.copy()
-                g["date"] = g["date"].dt.strftime("%Y-%m-%d")
-                st.dataframe(
-                    g[["keyword","date","ratio"]].rename(
-                        columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}
-                    ).sort_values("날짜", ascending=False).head(40),
-                    use_container_width=True, hide_index=True,
-                )
-        else:
-            st.info("구글 데이터 없음")
-
-    st.caption(
-        "⚠️ 네이버(일별 지수)와 구글(주별 지수)은 계산 기준이 달라 직접 비교하지 마세요. "
-        "각 플랫폼 콘텐츠 기획 시 독립적으로 참고하세요."
-    )
-
-st.divider()
 st.caption(
     f"ⓒ keyword-dashboard  ·  기준 월: {CURRENT_MONTH}  ·  "
-    f"저장 위치: data/trends.csv ({os.path.exists(TRENDS_CSV) and len(pd.read_csv(TRENDS_CSV))}건)"
+    f"저장 위치: data/trends.csv ({len(pd.read_csv(TRENDS_CSV))}건)"
     if os.path.exists(TRENDS_CSV) else f"ⓒ keyword-dashboard  ·  기준 월: {CURRENT_MONTH}"
 )
