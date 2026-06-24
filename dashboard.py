@@ -45,28 +45,35 @@ st.set_page_config(
 st.markdown("""
 <style>
 /* ────────────────────────────────────────────────
-   색상 변수 (전체 테마)
-   포인트: #2563EB (블루) 1개
-   배경:  #F8FAFC (거의 흰색)
-   텍스트: #0F172A (다크 네이비) / #64748B (보조) / #94A3B8 (힌트)
+   색상 체계 (전체 테마)
+   메인:   #2563EB (블루)
+   배경:   #F8FAFC / #ffffff
+   텍스트: #0F172A (짙은 네이비) / #64748B (보조) / #94A3B8 (힌트)
    테두리: #E2E8F0 (연한 회색)
+   주황:   #9A3412 / #FFF7ED — KPI 목표 미달·경고에만 사용
+   빨강:   #DC2626 — 삭제·오류에만 사용
 ──────────────────────────────────────────────── */
 
 /* ── Streamlit 기본 여백·헤더 제거 ── */
 #MainMenu { visibility: hidden; }
 footer    { visibility: hidden; }
 .stApp > header { display: none; }
+[data-testid="stToolbar"] { display: none !important; }
+[data-testid="stDecoration"] { display: none !important; }
 .block-container {
-    max-width: 1240px !important;
-    padding: 0 2.5rem 4rem !important;
+    max-width: 1400px !important;
+    padding: 0 2rem 4rem !important;
     margin: 0 auto !important;
 }
+
+/* 한글 단어 중간 줄바꿈 방지 */
+* { word-break: keep-all; }
 
 /* ── 전체 배경 ── */
 .stApp { background: #F8FAFC; }
 
 /* ═══════════════════════════════════════
-   상단 헤더 바
+   상단 슬림 네비바
 ═══════════════════════════════════════ */
 .dash-header {
     display: flex;
@@ -74,30 +81,29 @@ footer    { visibility: hidden; }
     justify-content: space-between;
     background: #ffffff;
     border-bottom: 1px solid #E2E8F0;
-    padding: 14px 2.5rem;
-    margin: 0 -2.5rem 2rem -2.5rem;
+    padding: 10px 2rem;
+    margin: 0 -2rem 0 -2rem;
 }
 .dash-logo {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; gap: 8px;
 }
 .dash-logo-mark {
-    width: 30px; height: 30px;
+    width: 26px; height: 26px;
     background: #2563EB;
-    border-radius: 8px;
+    border-radius: 6px;
     display: flex; align-items: center; justify-content: center;
-    color: white; font-size: 15px; font-weight: 700; line-height: 1;
+    color: white; font-size: 13px; font-weight: 700; line-height: 1;
     flex-shrink: 0;
 }
-.dash-logo-text .dt { font-size: 15px; font-weight: 700; color: #0F172A; line-height: 1.2; }
-.dash-logo-text .ds { font-size: 11px; color: #94A3B8; line-height: 1.3; }
+.dash-logo-text .dt { font-size: 13px; font-weight: 700; color: #0F172A; line-height: 1.2; }
 .dash-meta {
-    display: flex; align-items: center; gap: 20px;
-    font-size: 12px; color: #64748B;
+    display: flex; align-items: center; gap: 16px;
+    font-size: 11.5px; color: #64748B;
 }
 .dash-live {
     display: flex; align-items: center; gap: 5px;
     background: #F0FDF4; color: #166534;
-    padding: 4px 12px; border-radius: 20px;
+    padding: 3px 10px; border-radius: 20px;
     font-weight: 600; font-size: 11px;
 }
 .dash-live::before {
@@ -105,8 +111,47 @@ footer    { visibility: hidden; }
 }
 
 /* ═══════════════════════════════════════
+   페이지 타이틀 (헤더 바 아래)
+═══════════════════════════════════════ */
+.page-hero {
+    padding: 1.8rem 0 1.5rem;
+    border-bottom: 1px solid #E2E8F0;
+    margin-bottom: 2rem;
+}
+.page-hero-title {
+    font-size: 1.7rem;
+    font-weight: 800;
+    color: #0F172A;
+    margin: 0 0 0.5rem;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+}
+.page-hero-desc {
+    font-size: 0.95rem;
+    color: #64748B;
+    margin: 0;
+    line-height: 1.5;
+}
+
+/* ═══════════════════════════════════════
    섹션 헤더
 ═══════════════════════════════════════ */
+/* 상위 섹션 (대분류) */
+.sec-hdr-main {
+    margin: 0 0 1.5rem 0;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid #2563EB;
+}
+.sec-hdr-main .sh-t {
+    font-size: 1.1rem; font-weight: 800; color: #0F172A;
+    margin: 0; line-height: 1.3;
+}
+.sec-hdr-main .sh-s {
+    font-size: 12.5px; color: #64748B;
+    margin: 4px 0 0; line-height: 1.5;
+}
+
+/* 하위 섹션 (소분류) */
 .sec-hdr {
     border-left: 3px solid #2563EB;
     padding-left: 12px;
@@ -217,6 +262,18 @@ hr { border-color: #E2E8F0 !important; margin: 1.5rem 0 !important; }
 
 /* 기존 section-title (하위 호환) */
 .section-title { font-size:1.1rem; font-weight:700; color:#0F172A; margin:0 0 4px 0; }
+
+/* ═══════════════════════════════════════
+   모바일 반응형
+═══════════════════════════════════════ */
+@media (max-width: 768px) {
+    .block-container { padding: 0 1rem 3rem !important; }
+    .dash-header { padding: 10px 1rem; margin: 0 -1rem; flex-wrap: wrap; gap: 8px; }
+    .dash-meta { gap: 10px; flex-wrap: wrap; }
+    .page-hero-title { font-size: 1.3rem; }
+    .kpi-card { padding: 14px 16px; }
+    .kpi-value { font-size: 2rem; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -540,16 +597,19 @@ st.markdown(f"""
   <div class="dash-logo">
     <div class="dash-logo-mark">K</div>
     <div class="dash-logo-text">
-      <div class="dt">키워드 인텔리전스</div>
-      <div class="ds">IT·보안 키워드 트렌드 & KPI 대시보드 · SCK/STK Corp</div>
+      <div class="dt">SCK/STK Corp &nbsp;·&nbsp; 커뮤니케이션팀</div>
     </div>
   </div>
   <div class="dash-meta">
     <span>기준월 <strong>{CURRENT_MONTH}</strong></span>
-    <span>업데이트 {_now_str}</span>
+    <span>{_now_str} 기준</span>
     <span>{_sync_label}</span>
     <span class="dash-live">라이브</span>
   </div>
+</div>
+<div class="page-hero">
+  <div class="page-hero-title">SCK 커뮤니케이션팀<br>키워드 트렌드 대시보드</div>
+  <div class="page-hero-desc">트렌드 키워드의 발굴부터 PR·온드미디어 반영까지 관리합니다.</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -600,11 +660,18 @@ with c3:
     </div>""", unsafe_allow_html=True)
     st.progress(1.0 if kpi_pass else max(reflection_rate / 100, 0.03))
 
-st.markdown("<div style='margin-top:2rem'></div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
-# 섹션 1: 내 추적 키워드 관리 + 그래프
+# 상위 섹션: 트렌드 키워드 탐색
 # ══════════════════════════════════════════════════════
+st.markdown("""
+<div class="sec-hdr-main">
+  <div class="sh-t">트렌드 키워드 탐색</div>
+  <div class="sh-s">네이버 데이터랩·구글 트렌드 검색량 변화 추적 &nbsp;·&nbsp; 급상승 키워드 자동 발굴</div>
+</div>""", unsafe_allow_html=True)
+
+# ── 소섹션 1: 추적 키워드 관리 + 그래프 ──────────────
 st.markdown("""
 <div class="sec-hdr">
   <div class="sh-t">추적 키워드</div>
@@ -795,9 +862,8 @@ else:
 
 st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════
-# 섹션 2: 이번 주 급상승 키워드 발굴
-# ══════════════════════════════════════════════════════
+# ── 소섹션 2: 급상승 키워드 발굴 ──────────────────────
+st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
 st.markdown("""
 <div class="sec-hdr">
   <div class="sh-t">급상승 키워드 발굴</div>
