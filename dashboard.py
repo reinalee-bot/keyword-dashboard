@@ -1,16 +1,18 @@
 """
 키워드 트렌드 KPI 대시보드 — CSV 저장 방식
-  data/trends.csv          : 네이버·구글 검색 트렌드 데이터
-  data/derived_keywords.csv: 도출 키워드 관리 (반영 Y/N)
+  data/trends.csv           : 네이버·구글 검색 트렌드 데이터
+  data/derived_keywords.csv : 도출 키워드 관리 (활용처·상태·벤더·아이디어)
+  data/applied_content.csv  : 반영 콘텐츠 (보도자료·기획기사·SNS 게시물 등)
+  data/tracked_keywords.csv : 추적 키워드 목록
 
 GitHub 연동(GITHUB_TOKEN + GITHUB_REPO 설정 시):
-  - derived_keywords.csv 읽기·쓰기를 GitHub API로 처리
-  - 팀 누구나 '반영' 저장 → GitHub 커밋 → 영구 보존
+  - CSV 읽기·쓰기를 GitHub API로 처리
+  - 팀 누구나 수정 → GitHub 커밋 → 영구 보존
 """
 
 import io
 import os
-from datetime import datetime
+from datetime import datetime, date
 
 import pandas as pd
 import plotly.express as px
@@ -28,13 +30,23 @@ BASE_DIR     = os.path.dirname(__file__)
 DATA_DIR     = os.path.join(BASE_DIR, "data")
 TRENDS_CSV   = os.path.join(DATA_DIR, "trends.csv")
 DERIVED_CSV  = os.path.join(DATA_DIR, "derived_keywords.csv")
+CONTENT_CSV  = os.path.join(DATA_DIR, "applied_content.csv")
+TRACKED_CSV  = os.path.join(DATA_DIR, "tracked_keywords.csv")
 
-DERIVED_COLS  = ["keyword", "kpi_month", "reflected", "source", "added_at"]
-TRENDS_COLS   = ["keyword", "date", "ratio", "source", "collected_at"]
-TRACKED_CSV   = os.path.join(DATA_DIR, "tracked_keywords.csv")
-TRACKED_COLS  = ["keyword", "added_at"]
+# (가) 도출 키워드 컬럼
+DERIVED_COLS = [
+    "keyword", "kpi_month", "usage_type", "status",
+    "vendor", "idea", "source_url", "discovery_source", "added_at",
+]
+# (나) 적용 콘텐츠 컬럼
+CONTENT_COLS = [
+    "keyword", "kpi_month", "content_type",
+    "content_name", "url", "published_at", "added_at",
+]
+TRENDS_COLS  = ["keyword", "date", "ratio", "source", "collected_at"]
+TRACKED_COLS = ["keyword", "added_at"]
 
-CURRENT_MONTH = datetime.today().strftime("%Y-%m")   # 예: "2026-06"
+CURRENT_MONTH = datetime.today().strftime("%Y-%m")
 
 st.set_page_config(
     page_title="키워드 인텔리전스 | SCK·STK",
@@ -42,6 +54,7 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── CSS ──────────────────────────────────────────────
 st.markdown("""
 <style>
 /* ────────────────────────────────────────────────
@@ -58,7 +71,7 @@ st.markdown("""
 #MainMenu { visibility: hidden; }
 footer    { visibility: hidden; }
 .stApp > header { display: none; }
-[data-testid="stToolbar"] { display: none !important; }
+[data-testid="stToolbar"]    { display: none !important; }
 [data-testid="stDecoration"] { display: none !important; }
 .block-container {
     max-width: 1400px !important;
@@ -84,34 +97,24 @@ footer    { visibility: hidden; }
     padding: 10px 2rem;
     margin: 0 -2rem 0 -2rem;
 }
-.dash-logo {
-    display: flex; align-items: center; gap: 8px;
-}
+.dash-logo { display: flex; align-items: center; gap: 8px; }
 .dash-logo-mark {
     width: 26px; height: 26px;
-    background: #2563EB;
-    border-radius: 6px;
+    background: #2563EB; border-radius: 6px;
     display: flex; align-items: center; justify-content: center;
-    color: white; font-size: 13px; font-weight: 700; line-height: 1;
-    flex-shrink: 0;
+    color: white; font-size: 13px; font-weight: 700; flex-shrink: 0;
 }
-.dash-logo-text .dt { font-size: 13px; font-weight: 700; color: #0F172A; line-height: 1.2; }
-.dash-meta {
-    display: flex; align-items: center; gap: 16px;
-    font-size: 11.5px; color: #64748B;
-}
+.dash-logo-text .dt { font-size: 13px; font-weight: 700; color: #0F172A; }
+.dash-meta { display: flex; align-items: center; gap: 16px; font-size: 11.5px; color: #64748B; }
 .dash-live {
     display: flex; align-items: center; gap: 5px;
     background: #F0FDF4; color: #166534;
-    padding: 3px 10px; border-radius: 20px;
-    font-weight: 600; font-size: 11px;
+    padding: 3px 10px; border-radius: 20px; font-weight: 600; font-size: 11px;
 }
-.dash-live::before {
-    content: "●"; font-size: 8px; color: #16A34A;
-}
+.dash-live::before { content: "●"; font-size: 8px; color: #16A34A; }
 
 /* ═══════════════════════════════════════
-   페이지 타이틀 (헤더 바 아래)
+   페이지 타이틀
 ═══════════════════════════════════════ */
 .page-hero {
     padding: 1.8rem 0 1.5rem;
@@ -119,70 +122,39 @@ footer    { visibility: hidden; }
     margin-bottom: 2rem;
 }
 .page-hero-title {
-    font-size: 1.7rem;
-    font-weight: 800;
-    color: #0F172A;
-    margin: 0 0 0.5rem;
-    line-height: 1.25;
-    letter-spacing: -0.01em;
+    font-size: 1.7rem; font-weight: 800; color: #0F172A;
+    margin: 0 0 0.5rem; line-height: 1.25; letter-spacing: -0.01em;
 }
-.page-hero-desc {
-    font-size: 0.95rem;
-    color: #64748B;
-    margin: 0;
-    line-height: 1.5;
-}
+.page-hero-desc { font-size: 0.95rem; color: #64748B; margin: 0; line-height: 1.5; }
 
 /* ═══════════════════════════════════════
    섹션 헤더
 ═══════════════════════════════════════ */
-/* 상위 섹션 (대분류) */
 .sec-hdr-main {
     margin: 0 0 1.5rem 0;
     padding-bottom: 0.75rem;
     border-bottom: 2px solid #2563EB;
 }
-.sec-hdr-main .sh-t {
-    font-size: 1.1rem; font-weight: 800; color: #0F172A;
-    margin: 0; line-height: 1.3;
-}
-.sec-hdr-main .sh-s {
-    font-size: 12.5px; color: #64748B;
-    margin: 4px 0 0; line-height: 1.5;
-}
+.sec-hdr-main .sh-t { font-size: 1.1rem; font-weight: 800; color: #0F172A; margin: 0; line-height: 1.3; }
+.sec-hdr-main .sh-s { font-size: 12.5px; color: #64748B; margin: 4px 0 0; line-height: 1.5; }
 
-/* 하위 섹션 (소분류) */
-.sec-hdr {
-    border-left: 3px solid #2563EB;
-    padding-left: 12px;
-    margin: 0 0 14px 0;
-}
-.sec-hdr .sh-t {
-    font-size: 15px; font-weight: 700; color: #0F172A;
-    margin: 0; line-height: 1.3;
-}
-.sec-hdr .sh-s {
-    font-size: 12px; color: #94A3B8;
-    margin: 3px 0 0; line-height: 1.4;
-}
+.sec-hdr { border-left: 3px solid #2563EB; padding-left: 12px; margin: 0 0 14px 0; }
+.sec-hdr .sh-t { font-size: 15px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.3; }
+.sec-hdr .sh-s { font-size: 12px; color: #94A3B8; margin: 3px 0 0; line-height: 1.4; }
 
 /* ═══════════════════════════════════════
    KPI 카드
 ═══════════════════════════════════════ */
 .kpi-card {
-    background: white;
-    border: 1px solid #E2E8F0;
-    border-radius: 10px;
-    padding: 20px 22px 18px;
+    background: white; border: 1px solid #E2E8F0;
+    border-radius: 10px; padding: 20px 22px 18px;
 }
 .kpi-label {
     font-size: 10.5px; font-weight: 700; color: #94A3B8;
     text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px;
 }
-.kpi-value {
-    font-size: 2.6rem; font-weight: 700; color: #0F172A; line-height: 1;
-}
-.kpi-unit { font-size: .95rem; font-weight: 400; color: #94A3B8; margin-left: 3px; }
+.kpi-value { font-size: 2.6rem; font-weight: 700; color: #0F172A; line-height: 1; }
+.kpi-unit  { font-size: .95rem; font-weight: 400; color: #94A3B8; margin-left: 3px; }
 .kpi-target { font-size: 12px; color: #94A3B8; margin-top: 8px; }
 .badge-pass {
     display: inline-block; background: #F0FDF4; color: #166534;
@@ -194,23 +166,44 @@ footer    { visibility: hidden; }
 }
 
 /* ═══════════════════════════════════════
-   그래프 카드
+   반영 현황 표
 ═══════════════════════════════════════ */
-.chart-card-wrap {
-    background: white; border: 1px solid #E2E8F0;
-    border-radius: 10px; padding: 16px 20px 8px;
+.kw-table-hdr {
+    font-size: 11px; font-weight: 700; color: #64748B;
+    text-transform: uppercase; letter-spacing: .05em; padding: 0 4px;
 }
+.kw-cell { padding: 2px 4px; font-size: 13.5px; line-height: 1.6; }
+.status-done {
+    display: inline-block; background: #EFF6FF; color: #1D4ED8;
+    border-radius: 4px; padding: 2px 8px; font-size: 11.5px; font-weight: 600;
+}
+.status-todo {
+    display: inline-block; background: #F1F5F9; color: #475569;
+    border-radius: 4px; padding: 2px 8px; font-size: 11.5px; font-weight: 600;
+}
+.usage-tag-pr {
+    display: inline-block; background: #EFF6FF; color: #1e40af;
+    border-radius: 4px; padding: 2px 8px; font-size: 11.5px; font-weight: 600;
+}
+.usage-tag-owned {
+    display: inline-block; background: #FDF4FF; color: #7e22ce;
+    border-radius: 4px; padding: 2px 8px; font-size: 11.5px; font-weight: 600;
+}
+.usage-tag-common {
+    display: inline-block; background: #F0FDF4; color: #166534;
+    border-radius: 4px; padding: 2px 8px; font-size: 11.5px; font-weight: 600;
+}
+.usage-tag-none {
+    display: inline-block; background: #F1F5F9; color: #94A3B8;
+    border-radius: 4px; padding: 2px 8px; font-size: 11.5px; font-weight: 600;
+}
+
+/* ═══════════════════════════════════════
+   그래프
+═══════════════════════════════════════ */
 .src-naver  { font-size: 12px; font-weight: 700; color: #059669; }
 .src-google { font-size: 12px; font-weight: 700; color: #DC2626; }
 .chart-hint { font-size: 11px; color: #94A3B8; margin: 2px 0 6px; }
-
-/* ═══════════════════════════════════════
-   발굴 키워드 카드
-═══════════════════════════════════════ */
-/* Streamlit border 컨테이너를 덮어씀 */
-div[data-testid="stContainer"] > div[data-testid="element-container"] > div {
-    border-radius: 8px !important;
-}
 
 /* ═══════════════════════════════════════
    버튼
@@ -233,7 +226,6 @@ button[kind="primary"]:hover,
     border-color: #E2E8F0 !important;
     color: #374151 !important;
 }
-/* ✕ 삭제 버튼 */
 div[data-testid*="chip_del"] button,
 div[data-key*="chip_del"] button {
     color: #DC2626 !important;
@@ -241,26 +233,14 @@ div[data-key*="chip_del"] button {
     background: white !important;
 }
 div[data-testid*="chip_del"] button:hover,
-div[data-key*="chip_del"] button:hover {
-    background: #FEF2F2 !important;
-}
+div[data-key*="chip_del"] button:hover { background: #FEF2F2 !important; }
 
 /* ═══════════════════════════════════════
-   구분선·기타
+   기타
 ═══════════════════════════════════════ */
 hr { border-color: #E2E8F0 !important; margin: 1.5rem 0 !important; }
 .stProgress > div > div { background: #2563EB !important; }
-
-/* 섹션 간 여백 */
-.section-gap { margin-top: 2.5rem; }
-
-/* 스파크라인 표 헤더 */
-.spark-hdr {
-    font-size: 11px; font-weight: 700; color: #64748B;
-    text-transform: uppercase; letter-spacing: .05em;
-}
-
-/* 기존 section-title (하위 호환) */
+.spark-hdr { font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: .05em; }
 .section-title { font-size:1.1rem; font-weight:700; color:#0F172A; margin:0 0 4px 0; }
 
 /* ═══════════════════════════════════════
@@ -278,49 +258,76 @@ hr { border-color: #E2E8F0 !important; margin: 1.5rem 0 !important; }
 """, unsafe_allow_html=True)
 
 
-# ──────────────────────────────────────────────────────
-# 데이터 초기화 — data/ 폴더와 CSV 파일 없으면 생성
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
+# 데이터 초기화 — 파일 없으면 생성, 구버전이면 마이그레이션
+# ══════════════════════════════════════════════════════
 def ensure_data():
     os.makedirs(DATA_DIR, exist_ok=True)
+
     if not os.path.exists(TRENDS_CSV):
-        pd.DataFrame(columns=TRENDS_COLS).to_csv(
-            TRENDS_CSV, index=False, encoding="utf-8-sig"
-        )
+        pd.DataFrame(columns=TRENDS_COLS).to_csv(TRENDS_CSV, index=False, encoding="utf-8-sig")
+
+    # derived_keywords.csv — 새 컬럼 구조로 마이그레이션
     if not os.path.exists(DERIVED_CSV):
-        pd.DataFrame(columns=DERIVED_COLS).to_csv(
-            DERIVED_CSV, index=False, encoding="utf-8-sig"
-        )
-    # 추적 키워드 초기값: keywords.py에서 가져옴
+        pd.DataFrame(columns=DERIVED_COLS).to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+    else:
+        df = pd.read_csv(DERIVED_CSV, dtype=str).fillna("")
+        changed = False
+        if "usage_type" not in df.columns:
+            df["usage_type"] = ""; changed = True
+        if "status" not in df.columns:
+            if "reflected" in df.columns:
+                df["status"] = df["reflected"].apply(
+                    lambda x: "반영완료" if str(x).strip() in ["1", "true", "True"] else "도출"
+                )
+            else:
+                df["status"] = "도출"
+            changed = True
+        if "vendor" not in df.columns:
+            df["vendor"] = ""; changed = True
+        if "idea" not in df.columns:
+            df["idea"] = ""; changed = True
+        if "source_url" not in df.columns:
+            df["source_url"] = ""; changed = True
+        if "discovery_source" not in df.columns:
+            df["discovery_source"] = df["source"] if "source" in df.columns else "직접 입력"
+            changed = True
+        if changed:
+            for col in DERIVED_COLS:
+                if col not in df.columns:
+                    df[col] = ""
+            df[DERIVED_COLS].to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+
+    if not os.path.exists(CONTENT_CSV):
+        pd.DataFrame(columns=CONTENT_COLS).to_csv(CONTENT_CSV, index=False, encoding="utf-8-sig")
+
     if not os.path.exists(TRACKED_CSV):
         try:
             from keywords import KEYWORDS as _default_kws
         except ImportError:
             _default_kws = []
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        pd.DataFrame(
-            [[kw, now] for kw in _default_kws], columns=TRACKED_COLS
-        ).to_csv(TRACKED_CSV, index=False, encoding="utf-8-sig")
+        pd.DataFrame([[kw, now] for kw in _default_kws], columns=TRACKED_COLS).to_csv(
+            TRACKED_CSV, index=False, encoding="utf-8-sig"
+        )
 
 
-# ──────────────────────────────────────────────────────
-# 도출 키워드 CSV CRUD — GitHub 연동 또는 로컬 파일
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
+# (가) 도출 키워드 CRUD
+# ══════════════════════════════════════════════════════
 
 @st.cache_data(ttl=30)
 def _load_derived_from_github() -> pd.DataFrame:
-    """GitHub에서 derived_keywords.csv를 읽습니다 (30초 캐시)."""
     df = gh.read_csv("data/derived_keywords.csv")
     return df if df is not None else pd.DataFrame(columns=DERIVED_COLS)
 
 
 def _read_derived_all() -> pd.DataFrame:
-    """도출 키워드 전체를 읽습니다 — GitHub 연동 시 GitHub에서, 아니면 로컬에서."""
     if gh.is_configured():
         return _load_derived_from_github()
     if not os.path.exists(DERIVED_CSV):
         return pd.DataFrame(columns=DERIVED_COLS)
-    df = pd.read_csv(DERIVED_CSV, dtype=str)
+    df = pd.read_csv(DERIVED_CSV, dtype=str).fillna("")
     for col in DERIVED_COLS:
         if col not in df.columns:
             df[col] = ""
@@ -328,54 +335,41 @@ def _read_derived_all() -> pd.DataFrame:
 
 
 def _write_derived(df: pd.DataFrame, message: str) -> bool:
-    """도출 키워드를 저장합니다 — GitHub 연동 시 GitHub에, 아니면 로컬에."""
     if gh.is_configured():
         ok = gh.write_csv(df, "data/derived_keywords.csv", message)
         if ok:
-            _load_derived_from_github.clear()  # 캐시 초기화 → 다음 로드에서 fresh read
+            _load_derived_from_github.clear()
         return ok
-    else:
-        df.to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
-        return True
+    df[DERIVED_COLS].to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+    return True
 
 
 def load_derived(month: str) -> pd.DataFrame:
     df = _read_derived_all()
-    df = df[df["kpi_month"] == month].copy() if "kpi_month" in df.columns else pd.DataFrame(columns=DERIVED_COLS)
-    df["reflected"] = df["reflected"].astype(str).str.lower().isin(["1", "true", "yes"])
-    df = df.rename(columns={
-        "keyword": "키워드", "kpi_month": "월",
-        "reflected": "반영", "source": "출처", "added_at": "도출일",
-    })
-    return df[["키워드", "월", "반영", "출처", "도출일"]].reset_index(drop=True)
+    if df.empty or "kpi_month" not in df.columns:
+        return pd.DataFrame(columns=["키워드", "활용처", "상태", "벤더", "아이디어", "출처URL", "등록출처", "등록일"])
+    df = df[df["kpi_month"] == month].copy()
+    return df.rename(columns={
+        "keyword": "키워드", "kpi_month": "월", "usage_type": "활용처",
+        "status": "상태", "vendor": "벤더", "idea": "아이디어",
+        "source_url": "출처URL", "discovery_source": "등록출처", "added_at": "등록일",
+    })[["키워드", "활용처", "상태", "벤더", "아이디어", "출처URL", "등록출처", "등록일"]].reset_index(drop=True)
 
 
-def load_derived_all_for_excel() -> pd.DataFrame:
-    return _read_derived_all()
-
-
-def add_keyword(keyword: str, month: str, source: str = "manual") -> bool:
-    df  = _read_derived_all()
-    dup = ((df["keyword"] == keyword) & (df["kpi_month"] == month)) if len(df) > 0 else pd.Series([False])
-    if dup.any():
+def add_keyword(keyword: str, month: str, usage_type: str = "",
+                vendor: str = "", idea: str = "", source_url: str = "",
+                discovery_source: str = "직접 입력") -> bool:
+    df = _read_derived_all()
+    if not df.empty and ((df["keyword"] == keyword) & (df["kpi_month"] == month)).any():
         return False
-    now     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_row = pd.DataFrame([[keyword, month, "0", source, now]], columns=DERIVED_COLS)
-    df      = pd.concat([df, new_row], ignore_index=True)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_row = pd.DataFrame(
+        [[keyword, month, usage_type, "도출", vendor, idea, source_url, discovery_source, now]],
+        columns=DERIVED_COLS,
+    )
+    df = pd.concat([df, new_row], ignore_index=True)
     _write_derived(df, f"키워드 추가: {keyword} ({month})")
     return True
-
-
-def save_reflected(df_display: pd.DataFrame):
-    """data_editor 결과(한글 컬럼)를 저장 — GitHub 또는 로컬"""
-    all_df = _read_derived_all()
-    for _, row in df_display.iterrows():
-        mask = (
-            (all_df["keyword"]   == row["키워드"]) &
-            (all_df["kpi_month"] == row["월"])
-        )
-        all_df.loc[mask, "reflected"] = "1" if row["반영"] else "0"
-    _write_derived(all_df, f"반영 상태 업데이트 ({datetime.now().strftime('%Y-%m-%d %H:%M')})")
 
 
 def delete_keyword(keyword: str, month: str):
@@ -384,9 +378,85 @@ def delete_keyword(keyword: str, month: str):
     _write_derived(df, f"키워드 삭제: {keyword} ({month})")
 
 
-# ──────────────────────────────────────────────────────
-# 추적 키워드 CRUD — GitHub 연동 또는 로컬 파일
-# ──────────────────────────────────────────────────────
+def _update_keyword_status(keyword: str, month: str, status: str):
+    df = _read_derived_all()
+    mask = (df["keyword"] == keyword) & (df["kpi_month"] == month)
+    if mask.any():
+        df.loc[mask, "status"] = status
+        _write_derived(df, f"상태 변경: {keyword} → {status}")
+
+
+# ══════════════════════════════════════════════════════
+# (나) 적용 콘텐츠 CRUD
+# ══════════════════════════════════════════════════════
+
+@st.cache_data(ttl=30)
+def _load_content_from_github() -> pd.DataFrame:
+    df = gh.read_csv("data/applied_content.csv")
+    return df if df is not None else pd.DataFrame(columns=CONTENT_COLS)
+
+
+def _read_content_all() -> pd.DataFrame:
+    if gh.is_configured():
+        return _load_content_from_github()
+    if not os.path.exists(CONTENT_CSV):
+        return pd.DataFrame(columns=CONTENT_COLS)
+    df = pd.read_csv(CONTENT_CSV, dtype=str).fillna("")
+    for col in CONTENT_COLS:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
+def _write_content(df: pd.DataFrame, message: str) -> bool:
+    if gh.is_configured():
+        ok = gh.write_csv(df, "data/applied_content.csv", message)
+        if ok:
+            _load_content_from_github.clear()
+        return ok
+    df[CONTENT_COLS].to_csv(CONTENT_CSV, index=False, encoding="utf-8-sig")
+    return True
+
+
+def load_content(month: str) -> pd.DataFrame:
+    df = _read_content_all()
+    if df.empty or "kpi_month" not in df.columns:
+        return pd.DataFrame(columns=CONTENT_COLS)
+    return df[df["kpi_month"] == month].copy().reset_index(drop=True)
+
+
+def add_content(keyword: str, month: str, content_type: str,
+                content_name: str, url: str, published_at: str) -> bool:
+    df = _read_content_all()
+    dup = (
+        not df.empty
+        and ((df["keyword"] == keyword) & (df["kpi_month"] == month) & (df["content_name"] == content_name)).any()
+    )
+    if dup:
+        return False
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_row = pd.DataFrame(
+        [[keyword, month, content_type, content_name, url, published_at, now]],
+        columns=CONTENT_COLS,
+    )
+    df = pd.concat([df, new_row], ignore_index=True)
+    _write_content(df, f"콘텐츠 등록: {keyword} — {content_name}")
+    _update_keyword_status(keyword, month, "반영완료")
+    return True
+
+
+def delete_content_row(keyword: str, month: str, content_name: str):
+    df = _read_content_all()
+    df = df[~((df["keyword"] == keyword) & (df["kpi_month"] == month) & (df["content_name"] == content_name))]
+    _write_content(df, f"콘텐츠 삭제: {keyword} — {content_name}")
+    remaining = df[(df["keyword"] == keyword) & (df["kpi_month"] == month)]
+    if remaining.empty:
+        _update_keyword_status(keyword, month, "도출")
+
+
+# ══════════════════════════════════════════════════════
+# 추적 키워드 CRUD
+# ══════════════════════════════════════════════════════
 
 @st.cache_data(ttl=30)
 def _load_tracked_from_github() -> pd.DataFrame:
@@ -421,7 +491,6 @@ def load_tracked_keywords() -> list:
 
 
 def add_tracked_keyword(keyword: str) -> bool:
-    """추적 키워드 추가. 중복이면 False 반환."""
     df = _read_tracked_all()
     if keyword in df["keyword"].tolist():
         return False
@@ -438,9 +507,9 @@ def remove_tracked_keyword(keyword: str):
     _write_tracked(df, f"추적 키워드 삭제: {keyword}")
 
 
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
 # 트렌드 데이터 로드 (1분 캐시)
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
 @st.cache_data(ttl=60)
 def load_trends() -> pd.DataFrame:
     if not os.path.exists(TRENDS_CSV):
@@ -482,28 +551,21 @@ def draw_chart(df_weekly: pd.DataFrame) -> None:
 
 
 def _hex_to_rgba(hex_color: str, alpha: float = 0.13) -> str:
-    """#RRGGBB → rgba(r,g,b,alpha) 변환. Plotly fill에 사용."""
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return f"rgba({r},{g},{b},{alpha})"
 
 
 def make_sparkline(series: pd.Series, color: str) -> go.Figure:
-    """스파크라인: 작은 추이선 그래프 (축·레전드 없음)."""
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=list(range(len(series))),
-        y=series.values,
-        mode="lines",
-        line=dict(color=color, width=2),
-        fill="tozeroy",
-        fillcolor=_hex_to_rgba(color, 0.13),
+        x=list(range(len(series))), y=series.values,
+        mode="lines", line=dict(color=color, width=2),
+        fill="tozeroy", fillcolor=_hex_to_rgba(color, 0.13),
     ))
     fig.update_layout(
-        height=55,
-        margin=dict(l=0, r=0, t=2, b=2),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        height=55, margin=dict(l=0, r=0, t=2, b=2),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
         xaxis=dict(visible=False, fixedrange=True),
         yaxis=dict(visible=False, fixedrange=True),
@@ -512,27 +574,19 @@ def make_sparkline(series: pd.Series, color: str) -> go.Figure:
 
 
 def compute_change(df_kw: pd.DataFrame) -> tuple:
-    """
-    기간 전반부 평균 대비 후반부 평균 변화율을 계산합니다.
-    반환: (변화율 % | None, 날짜순 ratio 시리즈)
-    """
     if df_kw.empty:
         return None, pd.Series(dtype=float)
     s = df_kw.sort_values("date")["ratio"].reset_index(drop=True)
     if len(s) < 4:
         return None, s
-    half      = len(s) // 2
+    half = len(s) // 2
     first_avg = s.iloc[:half].mean()
     last_avg  = s.iloc[half:].mean()
-    if first_avg == 0:
-        change = None
-    else:
-        change = (last_avg - first_avg) / first_avg * 100
+    change = None if first_avg == 0 else (last_avg - first_avg) / first_avg * 100
     return change, s
 
 
 def change_badge(pct) -> str:
-    """변화율을 ▲/▼ 뱃지 HTML로 반환."""
     if pct is None:
         return "<span style='color:#aaa'>—</span>"
     color = "#2e7d32" if pct >= 0 else "#c62828"
@@ -540,48 +594,105 @@ def change_badge(pct) -> str:
     return f"<span style='color:{color};font-weight:700'>{arrow} {abs(pct):.0f}%</span>"
 
 
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
 # 뉴스 키워드 (1시간 캐시)
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
 @st.cache_data(ttl=3600, persist="disk")
 def get_news_keywords():
     return fetch_news_keywords(top_n=20)
 
 
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
 # 엑셀 내보내기
-# ──────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════
 def build_excel() -> bytes:
-    df_all = load_derived_all_for_excel()
+    df_derived = _read_derived_all()
+    df_content = _read_content_all()
 
-    if df_all.empty:
-        df_summary = pd.DataFrame(columns=["월", "도출 건수", "반영 건수", "반영률(%)"])
+    if df_derived.empty:
+        df_summary = pd.DataFrame(columns=["월", "도출 건수", "반영 건수", "반영률(%)", "KPI 달성"])
     else:
-        df_all["reflected_bool"] = df_all["reflected"].astype(str).str.lower().isin(["1", "true", "yes"])
-        grp = df_all.groupby("kpi_month")
-        df_summary = grp.agg(
-            도출건수=("keyword", "count"),
-            반영건수=("reflected_bool", "sum"),
-        ).reset_index()
-        df_summary.columns = ["월", "도출 건수", "반영 건수"]
-        df_summary["반영률(%)"] = (
-            df_summary["반영 건수"] / df_summary["도출 건수"] * 100
-        ).round(1)
-        df_summary["KPI 달성"] = df_summary.apply(
-            lambda r: "달성" if r["도출 건수"] >= 5 and r["반영률(%)"] >= 70 else "미달성", axis=1
-        )
+        months = df_derived["kpi_month"].dropna().unique()
+        rows = []
+        for m in sorted(months):
+            kws   = df_derived[df_derived["kpi_month"] == m]["keyword"].tolist()
+            done  = (df_content[(df_content["kpi_month"] == m) & (df_content["keyword"].isin(kws))]["keyword"].nunique()
+                     if not df_content.empty else 0)
+            total = len(kws)
+            rate  = round(done / total * 100, 1) if total > 0 else 0.0
+            rows.append({"월": m, "도출 건수": total, "반영 건수": done, "반영률(%)": rate,
+                         "KPI 달성": "달성" if total >= 5 and rate >= 70 else "미달성"})
+        df_summary = pd.DataFrame(rows)
 
-    df_detail = df_all.rename(columns={
-        "keyword": "키워드", "kpi_month": "월", "reflected": "반영",
-        "source": "출처", "added_at": "도출일",
-    }) if not df_all.empty else pd.DataFrame()
+    df_det = df_derived.rename(columns={
+        "keyword": "키워드", "kpi_month": "월", "usage_type": "활용처", "status": "상태",
+        "vendor": "벤더", "idea": "아이디어", "source_url": "출처URL",
+        "discovery_source": "등록출처", "added_at": "등록일",
+    }) if not df_derived.empty else pd.DataFrame()
+
+    df_co = df_content.rename(columns={
+        "keyword": "키워드", "kpi_month": "월", "content_type": "콘텐츠 유형",
+        "content_name": "콘텐츠명", "url": "URL", "published_at": "발행일", "added_at": "등록일",
+    }) if not df_content.empty else pd.DataFrame()
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df_summary.to_excel(writer, sheet_name="월별 KPI 요약", index=False)
-        if not df_detail.empty:
-            df_detail.to_excel(writer, sheet_name="키워드 상세", index=False)
+        if not df_det.empty:
+            df_det.to_excel(writer, sheet_name="도출 키워드", index=False)
+        if not df_co.empty:
+            df_co.to_excel(writer, sheet_name="적용 콘텐츠", index=False)
     return buf.getvalue()
+
+
+# ══════════════════════════════════════════════════════
+# 반영 콘텐츠 등록 다이얼로그
+# ══════════════════════════════════════════════════════
+@st.dialog("반영 콘텐츠 등록")
+def content_dialog(keyword: str, month: str, usage_type: str):
+    st.markdown(f"**키워드:** {keyword} &nbsp;·&nbsp; **활용처:** {usage_type or '미지정'}")
+
+    # 기존 등록 콘텐츠 목록
+    df_all_cont = _read_content_all()
+    existing = df_all_cont[(df_all_cont["keyword"] == keyword) & (df_all_cont["kpi_month"] == month)]
+    if not existing.empty:
+        st.markdown("**등록된 콘텐츠**")
+        for _, row in existing.iterrows():
+            c_name = row.get("content_name", "")
+            c_url  = row.get("url", "")
+            c_date = row.get("published_at", "")
+            col_a, col_b = st.columns([8, 2])
+            with col_a:
+                if c_url:
+                    st.markdown(f"• [{c_name or c_url}]({c_url}) — {c_date}")
+                else:
+                    st.markdown(f"• {c_name} — {c_date}")
+            with col_b:
+                if st.button("삭제", key=f"del_cont_{keyword}_{c_name}", type="secondary"):
+                    delete_content_row(keyword, month, c_name)
+                    st.rerun()
+        st.markdown("---")
+
+    st.markdown("**새 콘텐츠 추가**")
+    st.caption("적용 콘텐츠(보도자료·기획기사·인터뷰·링크드인·인스타 게시물 등)를 등록하면 '반영 완료' 처리됩니다.")
+
+    type_options = ["PR 기사", "온드미디어"]
+    default_idx  = 1 if usage_type == "온드미디어" else 0
+    c_type = st.selectbox("콘텐츠 유형 *", type_options, index=default_idx, key=f"ctype_{keyword}")
+    c_name = st.text_input("콘텐츠명 *", placeholder="예: AI보안 동향 보도자료 2026-06", key=f"cname_{keyword}")
+    c_url  = st.text_input("URL (선택)", placeholder="https://...", key=f"curl_{keyword}")
+    c_date = st.date_input("발행일", value=date.today(), key=f"cdate_{keyword}")
+
+    if st.button("저장", type="primary", use_container_width=True, key=f"csave_{keyword}"):
+        if not c_name.strip():
+            st.warning("콘텐츠명 또는 URL 중 하나는 반드시 입력해 주세요.")
+        else:
+            ok = add_content(keyword, month, c_type, c_name.strip(), c_url.strip(), str(c_date))
+            if ok:
+                st.success("콘텐츠가 등록됐습니다. 반영 완료로 처리됩니다.")
+                st.rerun()
+            else:
+                st.warning("이미 등록된 콘텐츠명입니다.")
 
 
 # ══════════════════════════════════════════════════════
@@ -589,7 +700,7 @@ def build_excel() -> bytes:
 # ══════════════════════════════════════════════════════
 ensure_data()
 
-# ── 헤더 바 ──────────────────────────────────────────
+# ── 헤더 바 + 페이지 타이틀 ──────────────────────────
 _now_str    = datetime.now().strftime("%Y.%m.%d %H:%M")
 _sync_label = "GitHub 동기화" if gh.is_configured() else "로컬 모드"
 st.markdown(f"""
@@ -613,17 +724,84 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ── KPI 자동 계산 ────────────────────────────────────
-df_cur          = load_derived(CURRENT_MONTH)
-KPI_DERIVED     = len(df_cur)
-KPI_REFLECTED   = int(df_cur["반영"].sum()) if not df_cur.empty else 0
+
+# ══════════════════════════════════════════════════════
+# 섹션 1: 도출 키워드 빠른 등록
+# ══════════════════════════════════════════════════════
+st.markdown("""
+<div class="sec-hdr-main">
+  <div class="sh-t">도출 키워드 빠른 등록</div>
+  <div class="sh-s">이번 달 발굴한 키워드를 바로 등록하세요. 벤더·아이디어 등 추가 정보는 펼쳐서 입력할 수 있습니다.</div>
+</div>""", unsafe_allow_html=True)
+
+with st.form("quick_register_form", clear_on_submit=True):
+    col_kw, col_usage, col_btn = st.columns([4, 3, 1.3])
+    with col_kw:
+        reg_keyword = st.text_input("키워드 *", placeholder="예: 제로트러스트")
+    with col_usage:
+        reg_usage = st.selectbox("활용처 *", ["PR 기사", "온드미디어", "공통"])
+    with col_btn:
+        st.markdown("<div style='height:29px'></div>", unsafe_allow_html=True)
+        reg_submit = st.form_submit_button("＋ 등록", use_container_width=True, type="primary")
+
+    with st.expander("추가 정보 입력 (선택)"):
+        col_v, col_i = st.columns(2)
+        with col_v:
+            reg_vendor = st.text_input("관련 벤더", placeholder="예: Palo Alto, CrowdStrike")
+        with col_i:
+            reg_idea = st.text_input("활용 아이디어·메모", placeholder="예: Q3 보도자료, 링크드인 인포그래픽")
+        reg_source_url = st.text_input("출처 URL", placeholder="https://... (참고 기사 또는 자료 링크)")
+
+if reg_submit:
+    kw = reg_keyword.strip() if reg_keyword else ""
+    if not kw:
+        st.warning("키워드를 입력해 주세요.")
+    else:
+        ok = add_keyword(
+            kw, CURRENT_MONTH,
+            usage_type=reg_usage,
+            vendor=reg_vendor.strip(),
+            idea=reg_idea.strip(),
+            source_url=reg_source_url.strip(),
+            discovery_source="직접 입력",
+        )
+        if ok:
+            st.success(f"'{kw}' 등록 완료 — 활용처: {reg_usage}")
+            st.rerun()
+        else:
+            st.warning("이미 등록된 키워드입니다. 기존 항목을 확인해 주세요.")
+
+st.markdown("<div style='margin-top:2rem'></div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════
+# KPI 자동 계산
+# ══════════════════════════════════════════════════════
+df_cur         = load_derived(CURRENT_MONTH)
+df_content_cur = load_content(CURRENT_MONTH)
+
+KPI_DERIVED   = len(df_cur)
+# 반영 완료 = 적용 콘텐츠(applied_content.csv)가 1건 이상 등록된 키워드 수
+KPI_REFLECTED = (
+    df_content_cur["keyword"].nunique()
+    if not df_content_cur.empty else 0
+)
 KPI_TARGET_D    = 5
 KPI_TARGET_R    = 70
 reflection_rate = round(KPI_REFLECTED / KPI_DERIVED * 100) if KPI_DERIVED > 0 else 0
 kpi_pass        = (KPI_DERIVED >= KPI_TARGET_D) and (reflection_rate >= KPI_TARGET_R)
 
-# ── KPI 카드 3개 ──────────────────────────────────────
-c1, c2, c3 = st.columns(3, gap="medium")
+
+# ══════════════════════════════════════════════════════
+# 섹션 2: KPI 카드 (4개)
+# ══════════════════════════════════════════════════════
+st.markdown("""
+<div class="sec-hdr">
+  <div class="sh-t">이번 달 KPI 현황</div>
+  <div class="sh-s">도출 목표 5건 · 반영률 목표 70% · 반영 완료는 적용 콘텐츠(보도자료·SNS 게시물 등) 등록 기준</div>
+</div>""", unsafe_allow_html=True)
+
+c1, c2, c3, c4 = st.columns(4, gap="medium")
 
 with c1:
     pct1 = min(int(KPI_DERIVED / KPI_TARGET_D * 100), 100)
@@ -636,21 +814,30 @@ with c1:
     st.progress(min(KPI_DERIVED / KPI_TARGET_D, 1.0))
 
 with c2:
+    st.markdown(f"""
+    <div class="kpi-card">
+      <div class="kpi-label">반영 완료</div>
+      <div class="kpi-value">{KPI_REFLECTED}<span class="kpi-unit">건</span></div>
+      <div class="kpi-target">도출 {KPI_DERIVED}건 중 · 적용 콘텐츠 등록 기준</div>
+    </div>""", unsafe_allow_html=True)
+    st.progress(min(KPI_REFLECTED / max(KPI_DERIVED, 1), 1.0))
+
+with c3:
     pct2 = min(int(reflection_rate / KPI_TARGET_R * 100), 100)
     st.markdown(f"""
     <div class="kpi-card">
-      <div class="kpi-label">키워드 반영률</div>
+      <div class="kpi-label">전체 반영률</div>
       <div class="kpi-value">{reflection_rate}<span class="kpi-unit">%</span></div>
-      <div class="kpi-target">목표 {KPI_TARGET_R}% · 반영 {KPI_REFLECTED} / 도출 {KPI_DERIVED}건</div>
+      <div class="kpi-target">목표 {KPI_TARGET_R}% · 달성률 {pct2}%</div>
     </div>""", unsafe_allow_html=True)
     st.progress(min(reflection_rate / KPI_TARGET_R, 1.0))
 
-with c3:
+with c4:
     badge_cls  = "badge-pass" if kpi_pass else "badge-fail"
     badge_text = "달성" if kpi_pass else "진행 중"
     hint = "도출·반영 두 목표 모두 달성" if kpi_pass else (
-        f"도출 {max(KPI_TARGET_D-KPI_DERIVED,0)}건 · "
-        f"반영률 {max(KPI_TARGET_R-reflection_rate,0)}%p 부족"
+        f"도출 {max(KPI_TARGET_D - KPI_DERIVED, 0)}건 · "
+        f"반영률 {max(KPI_TARGET_R - reflection_rate, 0)}%p 부족"
     )
     st.markdown(f"""
     <div class="kpi-card">
@@ -662,8 +849,142 @@ with c3:
 
 st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
 
+
 # ══════════════════════════════════════════════════════
-# 상위 섹션: 트렌드 키워드 탐색
+# 섹션 3: 활용처 + 반영 현황 표
+# ══════════════════════════════════════════════════════
+st.markdown("""
+<div class="sec-hdr-main">
+  <div class="sh-t">활용처 · 반영 현황</div>
+  <div class="sh-s">'수정' 버튼으로 적용 콘텐츠(보도자료·기획기사·SNS 게시물 등)를 등록하면 반영 완료 처리됩니다.</div>
+</div>""", unsafe_allow_html=True)
+
+col_filter_row, col_dl = st.columns([7, 2])
+with col_filter_row:
+    filter_tab = st.radio(
+        "활용처 필터", ["전체", "PR 기사", "온드미디어"],
+        horizontal=True, label_visibility="collapsed",
+    )
+with col_dl:
+    st.download_button(
+        "⬇ 엑셀 다운로드", data=build_excel(),
+        file_name=f"keyword_kpi_{CURRENT_MONTH}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+if df_cur.empty:
+    st.info("이번 달 등록된 도출 키워드가 없습니다. 위 '도출 키워드 빠른 등록'에서 추가해 주세요.")
+else:
+    # 활용처 필터 — '공통'은 PR 기사·온드미디어 양쪽에 표시
+    if filter_tab == "전체":
+        df_filtered = df_cur.copy()
+    elif filter_tab == "PR 기사":
+        df_filtered = df_cur[df_cur["활용처"].isin(["PR 기사", "공통"])].copy()
+    else:
+        df_filtered = df_cur[df_cur["활용처"].isin(["온드미디어", "공통"])].copy()
+
+    # 최신 콘텐츠 인덱스 (keyword → 가장 최근 1건)
+    if not df_content_cur.empty:
+        latest_cont = (
+            df_content_cur.sort_values("added_at", ascending=False)
+            .drop_duplicates(subset="keyword", keep="first")
+            .set_index("keyword")
+        )
+        cont_counts = df_content_cur.groupby("keyword").size().to_dict()
+    else:
+        latest_cont = pd.DataFrame()
+        cont_counts = {}
+
+    # 표 헤더
+    h0, h1, h2, h3, h4, h5, h6 = st.columns([2.5, 1.8, 1.5, 3.2, 1.4, 1.6, 1.2])
+    for col, label in zip(
+        [h0, h1, h2, h3, h4, h5, h6],
+        ["키워드", "활용처", "상태", "적용 콘텐츠명", "링크", "반영일", "수정"],
+    ):
+        col.markdown(f"<span class='kw-table-hdr'>{label}</span>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:6px 0 4px;'>", unsafe_allow_html=True)
+
+    for _, row in df_filtered.iterrows():
+        kw     = row["키워드"]
+        usage  = row["활용처"] or ""
+        status = row["상태"] or "도출"
+
+        # 콘텐츠 정보
+        has_cont = not latest_cont.empty and kw in latest_cont.index
+        if has_cont:
+            cont      = latest_cont.loc[kw]
+            cont_name = cont.get("content_name", "")
+            cont_url  = cont.get("url", "")
+            cont_date = cont.get("published_at", "")
+            cnt_total = cont_counts.get(kw, 0)
+        else:
+            cont_name = cont_url = cont_date = ""
+            cnt_total = 0
+
+        # 활용처 태그 HTML
+        if usage == "PR 기사":
+            u_html = f"<span class='usage-tag-pr'>{usage}</span>"
+        elif usage == "온드미디어":
+            u_html = f"<span class='usage-tag-owned'>{usage}</span>"
+        elif usage == "공통":
+            u_html = f"<span class='usage-tag-common'>{usage}</span>"
+        else:
+            u_html = f"<span class='usage-tag-none'>미지정</span>"
+
+        # 상태 태그 HTML
+        s_html = (
+            "<span class='status-done'>반영완료</span>"
+            if status == "반영완료"
+            else "<span class='status-todo'>도출</span>"
+        )
+
+        r0, r1, r2, r3, r4, r5, r6 = st.columns([2.5, 1.8, 1.5, 3.2, 1.4, 1.6, 1.2])
+        with r0:
+            st.markdown(f"<span class='kw-cell' style='font-weight:600'>{kw}</span>", unsafe_allow_html=True)
+        with r1:
+            st.markdown(f"<span class='kw-cell'>{u_html}</span>", unsafe_allow_html=True)
+        with r2:
+            st.markdown(f"<span class='kw-cell'>{s_html}</span>", unsafe_allow_html=True)
+        with r3:
+            if cont_name:
+                disp = cont_name + (f" 외 {cnt_total - 1}건" if cnt_total > 1 else "")
+                st.markdown(f"<span class='kw-cell'>{disp}</span>", unsafe_allow_html=True)
+            else:
+                st.markdown("<span class='kw-cell' style='color:#94A3B8'>—</span>", unsafe_allow_html=True)
+        with r4:
+            if cont_url:
+                st.markdown(f"[콘텐츠 보기]({cont_url})", unsafe_allow_html=False)
+            else:
+                st.markdown("<span style='color:#94A3B8;font-size:13px'>—</span>", unsafe_allow_html=True)
+        with r5:
+            st.markdown(
+                f"<span class='kw-cell' style='color:#64748B'>{cont_date or '—'}</span>",
+                unsafe_allow_html=True,
+            )
+        with r6:
+            if st.button("수정", key=f"edit_{kw}", use_container_width=True):
+                content_dialog(kw, CURRENT_MONTH, usage)
+
+        st.markdown("<hr style='margin:4px 0;border-color:#F1F5F9'>", unsafe_allow_html=True)
+
+    # 키워드 삭제 (숨김 처리)
+    with st.expander("키워드 삭제"):
+        st.caption("잘못 등록된 키워드를 삭제합니다. 연결된 적용 콘텐츠도 함께 삭제됩니다.")
+        del_options = df_cur["키워드"].tolist()
+        del_kw = st.selectbox("삭제할 키워드 선택", del_options, label_visibility="collapsed", key="del_kw_sel")
+        if st.button("선택한 키워드 삭제", type="secondary", key="btn_del_kw"):
+            delete_keyword(del_kw, CURRENT_MONTH)
+            df_c = _read_content_all()
+            df_c = df_c[~((df_c["keyword"] == del_kw) & (df_c["kpi_month"] == CURRENT_MONTH))]
+            _write_content(df_c, f"콘텐츠 일괄 삭제: {del_kw}")
+            st.success(f"'{del_kw}' 삭제됐습니다.")
+            st.rerun()
+
+st.markdown("<div style='margin-top:3rem'></div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════
+# 섹션 4: 트렌드 키워드 탐색 (상위)
 # ══════════════════════════════════════════════════════
 st.markdown("""
 <div class="sec-hdr-main">
@@ -671,7 +992,7 @@ st.markdown("""
   <div class="sh-s">네이버 데이터랩·구글 트렌드 검색량 변화 추적 &nbsp;·&nbsp; 급상승 키워드 자동 발굴</div>
 </div>""", unsafe_allow_html=True)
 
-# ── 소섹션 1: 추적 키워드 관리 + 그래프 ──────────────
+# ── 소섹션: 추적 키워드 ───────────────────────────────
 st.markdown("""
 <div class="sec-hdr">
   <div class="sh-t">추적 키워드</div>
@@ -680,50 +1001,38 @@ st.markdown("""
 
 tracked_kws = load_tracked_keywords()
 
-# ── 세션 상태: 잠깐 숨김 키워드 집합 ──────────────────
 if "hidden_kws" not in st.session_state:
     st.session_state["hidden_kws"] = set()
-# 삭제된 키워드가 hidden 집합에 남아있으면 정리
 st.session_state["hidden_kws"] &= set(tracked_kws)
-
-# ── 칩 렌더링 ─────────────────────────────────────────
 
 if not tracked_kws:
     st.info("추적 중인 키워드가 없습니다. 아래에서 추가해 주세요.")
 else:
     CHIPS_PER_ROW = 4
     for row_start in range(0, len(tracked_kws), CHIPS_PER_ROW):
-        batch = tracked_kws[row_start : row_start + CHIPS_PER_ROW]
-        # 칩당 [키워드 버튼(넓이 3) | ✕ 버튼(넓이 0.45)] × n + 빈 공간
+        batch  = tracked_kws[row_start : row_start + CHIPS_PER_ROW]
         widths = []
         for _ in batch:
             widths += [3, 0.45]
-        widths.append(max(0.1, 14 - sum(widths)))   # 우측 빈 공간
+        widths.append(max(0.1, 14 - sum(widths)))
         cols = st.columns(widths)
-
         for j, kw in enumerate(batch):
-            is_hidden = kw in st.session_state["hidden_kws"]
+            is_hidden  = kw in st.session_state["hidden_kws"]
             chip_label = f"○ {kw}" if is_hidden else f"● {kw}"
             chip_help  = "다시 클릭하면 그래프에 복원됩니다" if is_hidden else "클릭하면 그래프에서 잠깐 숨깁니다"
-
             with cols[j * 2]:
-                if st.button(chip_label, key=f"chip_toggle_{kw}",
-                             use_container_width=True, help=chip_help):
+                if st.button(chip_label, key=f"chip_toggle_{kw}", use_container_width=True, help=chip_help):
                     if is_hidden:
                         st.session_state["hidden_kws"].discard(kw)
                     else:
                         st.session_state["hidden_kws"].add(kw)
                     st.rerun()
-
             with cols[j * 2 + 1]:
-                if st.button("✕", key=f"chip_del_{kw}",
-                             help=f"'{kw}'를 추적 목록에서 완전 삭제",
-                             type="secondary"):
+                if st.button("✕", key=f"chip_del_{kw}", help=f"'{kw}'를 추적 목록에서 완전 삭제", type="secondary"):
                     remove_tracked_keyword(kw)
                     st.session_state["hidden_kws"].discard(kw)
                     st.rerun()
 
-# ── 새 키워드 추가 UI ──────────────────────────────────
 st.markdown("")
 col_add_in, col_add_btn = st.columns([5, 1])
 with col_add_in:
@@ -750,7 +1059,6 @@ with col_add_btn:
 
 st.markdown("")
 
-# ── 기간 선택 버튼 (7일 / 30일 / 90일) ─────────────────
 if "period_days" not in st.session_state:
     st.session_state["period_days"] = 30
 
@@ -765,19 +1073,17 @@ for col, (label, days) in zip(p_cols, PERIOD_OPTIONS.items()):
 
 period_days = st.session_state["period_days"]
 cutoff      = pd.Timestamp.today().normalize() - pd.Timedelta(days=period_days)
-
-# ── 주간 검색 관심도 그래프 (추적 키워드 중 숨김 제외) ─
-active_kws = [kw for kw in tracked_kws if kw not in st.session_state["hidden_kws"]]
-df_trends  = load_trends()
+active_kws  = [kw for kw in tracked_kws if kw not in st.session_state["hidden_kws"]]
+df_trends   = load_trends()
 
 if df_trends.empty:
     st.warning("data/trends.csv 에 데이터가 없습니다. 터미널에서 `python collector.py` 를 먼저 실행해 주세요.")
 elif not active_kws:
     st.info("모든 키워드가 숨김 상태입니다. 칩을 다시 클릭해서 복원하세요.")
 else:
-    df_period   = df_trends[(df_trends["keyword"].isin(active_kws)) & (df_trends["date"] >= cutoff)]
-    df_naver    = df_period[df_period["source"] == "naver"]
-    df_google   = df_period[df_period["source"] == "google"]
+    df_period = df_trends[(df_trends["keyword"].isin(active_kws)) & (df_trends["date"] >= cutoff)]
+    df_naver  = df_period[df_period["source"] == "naver"]
+    df_google = df_period[df_period["source"] == "google"]
 
     col_n, col_g = st.columns(2, gap="medium")
     with col_n:
@@ -787,7 +1093,11 @@ else:
             draw_chart(to_weekly(df_naver))
             with st.expander("네이버 원본 데이터"):
                 s = df_naver.copy(); s["date"] = s["date"].dt.strftime("%Y-%m-%d")
-                st.dataframe(s[["keyword","date","ratio"]].rename(columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}).sort_values("날짜", ascending=False).head(40), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    s[["keyword", "date", "ratio"]].rename(columns={"keyword": "키워드", "date": "날짜", "ratio": "관심도"})
+                    .sort_values("날짜", ascending=False).head(40),
+                    use_container_width=True, hide_index=True,
+                )
         else:
             st.info("선택 기간에 네이버 데이터가 없습니다.")
 
@@ -798,13 +1108,16 @@ else:
             draw_chart(to_weekly(df_google))
             with st.expander("구글 원본 데이터"):
                 g = df_google.copy(); g["date"] = g["date"].dt.strftime("%Y-%m-%d")
-                st.dataframe(g[["keyword","date","ratio"]].rename(columns={"keyword":"키워드","date":"날짜","ratio":"관심도"}).sort_values("날짜", ascending=False).head(40), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    g[["keyword", "date", "ratio"]].rename(columns={"keyword": "키워드", "date": "날짜", "ratio": "관심도"})
+                    .sort_values("날짜", ascending=False).head(40),
+                    use_container_width=True, hide_index=True,
+                )
         else:
             st.info("선택 기간에 구글 데이터가 없습니다.")
 
     st.caption("⚠️ 네이버(일별)와 구글(주별)은 집계 기준이 달라 직접 비교하지 마세요.")
 
-    # ── 키워드별 추이 요약 표 (스파크라인 + ▲▼) ────────────
     st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
     st.markdown(f"""
 <div class="sec-hdr">
@@ -812,58 +1125,40 @@ else:
   <div class="sh-s">최근 {period_days}일 · 전반부 대비 후반부 변화율 · 데이터 부족 시 표시</div>
 </div>""", unsafe_allow_html=True)
 
-    # 헤더 행
     hdr = st.columns([2.2, 3.5, 1.2, 3.5, 1.2])
     for h, txt in zip(hdr, ["키워드", "네이버 추이", "변화", "구글 추이", "변화"]):
         h.markdown(f"<span class='spark-hdr'>{txt}</span>", unsafe_allow_html=True)
-
     st.markdown("<hr style='margin:4px 0 8px;'>", unsafe_allow_html=True)
 
     for kw in active_kws:
         row_n = df_period[(df_period["keyword"] == kw) & (df_period["source"] == "naver")]
         row_g = df_period[(df_period["keyword"] == kw) & (df_period["source"] == "google")]
-
         c0, c1, c2, c3, c4 = st.columns([2.2, 3.5, 1.2, 3.5, 1.2])
-
         with c0:
             st.markdown(f"<span style='font-weight:600'>{kw}</span>", unsafe_allow_html=True)
-
         with c1:
             n_change, n_series = compute_change(row_n)
             if len(n_series) >= 3:
-                st.plotly_chart(
-                    make_sparkline(n_series, "#03c75a"),
-                    use_container_width=True,
-                    config={"displayModeBar": False},
-                    key=f"spark_n_{kw}_{period_days}",
-                )
+                st.plotly_chart(make_sparkline(n_series, "#03c75a"), use_container_width=True,
+                                config={"displayModeBar": False}, key=f"spark_n_{kw}_{period_days}")
             else:
                 st.caption("데이터 부족")
-
         with c2:
             st.markdown(change_badge(n_change), unsafe_allow_html=True)
-
         with c3:
             g_change, g_series = compute_change(row_g)
             if len(g_series) >= 3:
-                st.plotly_chart(
-                    make_sparkline(g_series, "#ea4335"),
-                    use_container_width=True,
-                    config={"displayModeBar": False},
-                    key=f"spark_g_{kw}_{period_days}",
-                )
+                st.plotly_chart(make_sparkline(g_series, "#ea4335"), use_container_width=True,
+                                config={"displayModeBar": False}, key=f"spark_g_{kw}_{period_days}")
             else:
                 st.caption("데이터 부족")
-
         with c4:
             st.markdown(change_badge(g_change), unsafe_allow_html=True)
-
         st.markdown("<hr style='margin:4px 0;border-color:#f0f0f0'>", unsafe_allow_html=True)
 
 st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
 
-# ── 소섹션 2: 급상승 키워드 발굴 ──────────────────────
-st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
+# ── 소섹션: 급상승 키워드 발굴 ────────────────────────
 st.markdown("""
 <div class="sec-hdr">
   <div class="sh-t">급상승 키워드 발굴</div>
@@ -879,11 +1174,11 @@ if news_kws:
     tracked_set  = set(tracked_kws)
     derived_set  = set(df_cur["키워드"].tolist()) if not df_cur.empty else set()
     cols_per_row = 4
-    rows         = [news_kws[i:i+cols_per_row] for i in range(0, len(news_kws), cols_per_row)]
+    news_rows    = [news_kws[i:i + cols_per_row] for i in range(0, len(news_kws), cols_per_row)]
 
-    for row in rows:
+    for news_row in news_rows:
         cols = st.columns(cols_per_row, gap="small")
-        for col, (word, count) in zip(cols, row):
+        for col, (word, count) in zip(cols, news_row):
             with col:
                 with st.container(border=True):
                     is_tracking = word in tracked_set
@@ -895,8 +1190,7 @@ if news_kws:
                     if is_tracking:
                         st.caption("📌 추적 중")
                     else:
-                        if st.button("📌 추적에 추가", key=f"track_{word}",
-                                     use_container_width=True, type="primary"):
+                        if st.button("📌 추적에 추가", key=f"track_{word}", use_container_width=True, type="primary"):
                             add_tracked_keyword(word)
                             with st.spinner(f"'{word}' 수집 중…"):
                                 naver_ok, google_ok = collect_single_keyword(word)
@@ -907,9 +1201,12 @@ if news_kws:
                             st.rerun()
                     if not is_derived:
                         if st.button("＋ 도출에 추가", key=f"derive_{word}", use_container_width=True):
-                            ok = add_keyword(word, CURRENT_MONTH, source="뉴스 자동탐지")
-                            st.success(f"'{word}' 도출 추가!") if ok else st.info("이미 도출됨")
-                            if ok: st.rerun()
+                            ok = add_keyword(word, CURRENT_MONTH, discovery_source="뉴스 자동탐지")
+                            if ok:
+                                st.success(f"'{word}' 도출 추가!")
+                                st.rerun()
+                            else:
+                                st.info("이미 등록된 키워드입니다. 기존 항목을 확인해 주세요.")
                     else:
                         st.caption("✅ 도출됨")
 else:
@@ -922,17 +1219,21 @@ with st.expander("✏️ 도출 키워드 직접 입력해서 추가하기"):
     with col_btn:
         if st.button("추가", use_container_width=True):
             if manual_kw.strip():
-                ok = add_keyword(manual_kw.strip(), CURRENT_MONTH, source="직접 입력")
-                st.success(f"'{manual_kw.strip()}' 추가됐습니다!") if ok else st.warning("이미 추가된 키워드입니다.")
-                if ok: st.rerun()
+                ok = add_keyword(manual_kw.strip(), CURRENT_MONTH, discovery_source="직접 입력")
+                if ok:
+                    st.success(f"'{manual_kw.strip()}' 추가됐습니다!")
+                    st.rerun()
+                else:
+                    st.warning("이미 등록된 키워드입니다. 기존 항목을 확인해 주세요.")
             else:
                 st.warning("키워드를 입력해 주세요.")
 
+# ── 푸터 ──────────────────────────────────────────────
 _trend_cnt = len(pd.read_csv(TRENDS_CSV)) if os.path.exists(TRENDS_CSV) else 0
 st.markdown(f"""
 <div style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid #E2E8F0;
             display:flex;justify-content:space-between;align-items:center;
             font-size:11px;color:#94A3B8;">
   <span>키워드 인텔리전스 · SCK/STK Corp · {CURRENT_MONTH}</span>
-  <span>데이터 {_trend_cnt:,}건 · 네이버 데이터랩 · 구글 트렌드</span>
+  <span>트렌드 데이터 {_trend_cnt:,}건 · 네이버 데이터랩 · 구글 트렌드</span>
 </div>""", unsafe_allow_html=True)
