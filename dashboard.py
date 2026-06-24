@@ -271,11 +271,15 @@ def ensure_data():
     if not os.path.exists(TRENDS_CSV):
         pd.DataFrame(columns=TRENDS_COLS).to_csv(TRENDS_CSV, index=False, encoding="utf-8-sig")
 
-    # derived_keywords.csv — 새 컬럼 구조로 마이그레이션
+    # derived_keywords.csv — 새 컬럼 구조로 마이그레이션 + NaN 정리
     if not os.path.exists(DERIVED_CSV):
         pd.DataFrame(columns=DERIVED_COLS).to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
     else:
-        df = pd.read_csv(DERIVED_CSV, dtype=str).fillna("")
+        try:
+            df = pd.read_csv(DERIVED_CSV, dtype=str).fillna("")
+        except Exception:
+            df = pd.DataFrame(columns=DERIVED_COLS)
+
         changed = False
         if "usage_type" not in df.columns:
             df["usage_type"] = ""; changed = True
@@ -296,11 +300,12 @@ def ensure_data():
         if "discovery_source" not in df.columns:
             df["discovery_source"] = df["source"] if "source" in df.columns else "직접 입력"
             changed = True
-        if changed:
-            for col in DERIVED_COLS:
-                if col not in df.columns:
-                    df[col] = ""
-            df[DERIVED_COLS].to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
+
+        # 항상 NaN 제거 후 저장 (컬럼 변경 여부와 관계없이)
+        for col in DERIVED_COLS:
+            if col not in df.columns:
+                df[col] = ""
+        df[DERIVED_COLS].fillna("").to_csv(DERIVED_CSV, index=False, encoding="utf-8-sig")
 
     if not os.path.exists(CONTENT_CSV):
         pd.DataFrame(columns=CONTENT_COLS).to_csv(CONTENT_CSV, index=False, encoding="utf-8-sig")
@@ -328,10 +333,17 @@ def _load_derived_from_github() -> pd.DataFrame:
 
 def _read_derived_all() -> pd.DataFrame:
     if gh.is_configured():
-        return _load_derived_from_github()
-    if not os.path.exists(DERIVED_CSV):
+        df = _load_derived_from_github()
+    elif not os.path.exists(DERIVED_CSV):
         return pd.DataFrame(columns=DERIVED_COLS)
-    df = pd.read_csv(DERIVED_CSV, dtype=str).fillna("")
+    else:
+        try:
+            df = pd.read_csv(DERIVED_CSV, dtype=str)
+        except Exception:
+            return pd.DataFrame(columns=DERIVED_COLS)
+
+    # NaN → 빈 문자열, 누락 컬럼 → 빈 문자열 (구버전 CSV·GitHub 캐시 모두 대응)
+    df = df.fillna("")
     for col in DERIVED_COLS:
         if col not in df.columns:
             df[col] = ""
@@ -349,15 +361,33 @@ def _write_derived(df: pd.DataFrame, message: str) -> bool:
 
 
 def load_derived(month: str) -> pd.DataFrame:
+    """이번 달 도출 키워드. 구버전·신버전 CSV 모두 안전하게 처리."""
+    _TARGET = ["키워드", "활용처", "상태", "벤더", "아이디어", "출처URL", "등록출처", "등록일"]
+
     df = _read_derived_all()
     if df.empty or "kpi_month" not in df.columns:
-        return pd.DataFrame(columns=["키워드", "활용처", "상태", "벤더", "아이디어", "출처URL", "등록출처", "등록일"])
+        return pd.DataFrame(columns=_TARGET)
+
     df = df[df["kpi_month"] == month].copy()
-    return df.rename(columns={
+
+    # 이중 안전장치: 내부 컬럼명이 빠져있으면 빈 값 보충
+    _DEFAULTS = {
+        "keyword": "", "kpi_month": month, "usage_type": "",
+        "status": "도출", "vendor": "", "idea": "",
+        "source_url": "", "discovery_source": "직접 입력", "added_at": "",
+    }
+    for col, val in _DEFAULTS.items():
+        if col not in df.columns:
+            df[col] = val
+
+    df = df.rename(columns={
         "keyword": "키워드", "kpi_month": "월", "usage_type": "활용처",
         "status": "상태", "vendor": "벤더", "idea": "아이디어",
         "source_url": "출처URL", "discovery_source": "등록출처", "added_at": "등록일",
-    })[["키워드", "활용처", "상태", "벤더", "아이디어", "출처URL", "등록출처", "등록일"]].reset_index(drop=True)
+    })
+
+    # reindex: 컬럼이 없어도 빈 문자열로 채워서 KeyError 방지
+    return df.reindex(columns=_TARGET, fill_value="").reset_index(drop=True)
 
 
 def add_keyword(keyword: str, month: str, usage_type: str = "",
