@@ -49,6 +49,9 @@ CONTENT_COLS = [
 ]
 TRENDS_COLS  = ["keyword", "date", "ratio", "source", "collected_at"]
 TRACKED_COLS = ["keyword", "added_at"]
+# (다) 월별 수동 KPI 입력
+MANUAL_CSV  = os.path.join(DATA_DIR, "monthly_manual.csv")
+MANUAL_COLS = ["kpi_month", "manual_derived", "manual_reflected", "note", "added_at"]
 
 CURRENT_MONTH = datetime.today().strftime("%Y-%m")
 
@@ -310,6 +313,9 @@ def ensure_data():
     if not os.path.exists(CONTENT_CSV):
         pd.DataFrame(columns=CONTENT_COLS).to_csv(CONTENT_CSV, index=False, encoding="utf-8-sig")
 
+    if not os.path.exists(MANUAL_CSV):
+        pd.DataFrame(columns=MANUAL_COLS).to_csv(MANUAL_CSV, index=False, encoding="utf-8-sig")
+
     if not os.path.exists(TRACKED_CSV):
         try:
             from keywords import KEYWORDS as _default_kws
@@ -486,6 +492,128 @@ def delete_content_row(keyword: str, month: str, content_name: str):
     remaining = df[(df["keyword"] == keyword) & (df["kpi_month"] == month)]
     if remaining.empty:
         _update_keyword_status(keyword, month, "도출")
+
+
+# ══════════════════════════════════════════════════════
+# (다) 월별 수동 KPI CRUD
+# ══════════════════════════════════════════════════════
+
+@st.cache_data(ttl=30)
+def _load_manual_from_github() -> pd.DataFrame:
+    df = gh.read_csv("data/monthly_manual.csv")
+    return df if df is not None else pd.DataFrame(columns=MANUAL_COLS)
+
+
+def _read_manual_all() -> pd.DataFrame:
+    if gh.is_configured():
+        df = _load_manual_from_github()
+    elif not os.path.exists(MANUAL_CSV):
+        return pd.DataFrame(columns=MANUAL_COLS)
+    else:
+        try:
+            df = pd.read_csv(MANUAL_CSV, dtype=str)
+        except Exception:
+            return pd.DataFrame(columns=MANUAL_COLS)
+    df = df.fillna("")
+    for col in MANUAL_COLS:
+        if col not in df.columns:
+            df[col] = ""
+    return df
+
+
+def _write_manual(df: pd.DataFrame, message: str) -> bool:
+    if gh.is_configured():
+        ok = gh.write_csv(df, "data/monthly_manual.csv", message)
+        if ok:
+            _load_manual_from_github.clear()
+        return ok
+    df[MANUAL_COLS].to_csv(MANUAL_CSV, index=False, encoding="utf-8-sig")
+    return True
+
+
+def add_manual_month(kpi_month: str, derived: int, reflected: int, note: str = "") -> bool:
+    df = _read_manual_all()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if kpi_month in df["kpi_month"].values:
+        idx = df[df["kpi_month"] == kpi_month].index[0]
+        df.loc[idx, ["manual_derived", "manual_reflected", "note", "added_at"]] = [
+            str(derived), str(reflected), note, now
+        ]
+    else:
+        new_row = pd.DataFrame([{
+            "kpi_month": kpi_month, "manual_derived": str(derived),
+            "manual_reflected": str(reflected), "note": note, "added_at": now,
+        }])
+        df = pd.concat([df, new_row], ignore_index=True)
+    return _write_manual(df[MANUAL_COLS], f"수동 KPI 입력: {kpi_month}")
+
+
+def delete_manual_month(kpi_month: str) -> bool:
+    df = _read_manual_all()
+    df = df[df["kpi_month"] != kpi_month].reset_index(drop=True)
+    return _write_manual(df[MANUAL_COLS], f"수동 KPI 삭제: {kpi_month}")
+
+
+def load_monthly_kpi_summary() -> pd.DataFrame:
+    """자동 집계(CSV) + 수동 입력을 합쳐 월별 KPI 누적표 반환 (최신 월 위에)."""
+    df_derived = _read_derived_all()
+    df_content = _read_content_all()
+    df_manual  = _read_manual_all()
+
+    # 자동 집계: derived_keywords의 kpi_month별 그룹
+    auto_months: dict = {}
+    if not df_derived.empty and "kpi_month" in df_derived.columns:
+        for month, grp in df_derived.groupby("kpi_month"):
+            if not month:
+                continue
+            kws  = grp["keyword"].tolist()
+            done = (
+                df_content[
+                    (df_content["kpi_month"] == month) & (df_content["keyword"].isin(kws))
+                ]["keyword"].nunique()
+                if not df_content.empty else 0
+            )
+            auto_months[month] = {"도출": len(kws), "반영": done, "비고": "자동 집계"}
+
+    # 수동 입력: 자동 집계 달과 겹치지 않는 달만 추가
+    manual_months: dict = {}
+    if not df_manual.empty:
+        for _, row in df_manual.iterrows():
+            m = row.get("kpi_month", "")
+            if not m or m in auto_months:
+                continue
+            try:
+                d = int(row.get("manual_derived", 0) or 0)
+                r = int(row.get("manual_reflected", 0) or 0)
+            except (ValueError, TypeError):
+                d, r = 0, 0
+            note_val = row.get("note", "").strip()
+            manual_months[m] = {
+                "도출": d, "반영": r,
+                "비고": f"수동 입력 ({note_val})" if note_val else "수동 입력",
+            }
+
+    all_months = {**auto_months, **manual_months}
+    if not all_months:
+        return pd.DataFrame(columns=["월", "도출 키워드", "반영 완료", "반영률(%)", "KPI 달성", "비고"])
+
+    rows = []
+    for m in sorted(all_months.keys(), reverse=True):
+        d     = all_months[m]
+        total = d["도출"]
+        done  = d["반영"]
+        rate  = round(done / total * 100, 1) if total > 0 else 0.0
+        if m == CURRENT_MONTH:
+            status = "⏳ 진행 중"
+        elif total >= 5 and rate >= 70:
+            status = "✅ 달성"
+        else:
+            status = "❌ 미달성"
+        rows.append({
+            "월": m, "도출 키워드": total, "반영 완료": done,
+            "반영률(%)": rate, "KPI 달성": status, "비고": d.get("비고", ""),
+        })
+    return pd.DataFrame(rows)
 
 
 # ══════════════════════════════════════════════════════
@@ -779,20 +907,10 @@ def build_excel() -> bytes:
     df_derived = _read_derived_all()
     df_content = _read_content_all()
 
-    if df_derived.empty:
-        df_summary = pd.DataFrame(columns=["월", "도출 건수", "반영 건수", "반영률(%)", "KPI 달성"])
-    else:
-        months = df_derived["kpi_month"].dropna().unique()
-        rows = []
-        for m in sorted(months):
-            kws   = df_derived[df_derived["kpi_month"] == m]["keyword"].tolist()
-            done  = (df_content[(df_content["kpi_month"] == m) & (df_content["keyword"].isin(kws))]["keyword"].nunique()
-                     if not df_content.empty else 0)
-            total = len(kws)
-            rate  = round(done / total * 100, 1) if total > 0 else 0.0
-            rows.append({"월": m, "도출 건수": total, "반영 건수": done, "반영률(%)": rate,
-                         "KPI 달성": "달성" if total >= 5 and rate >= 70 else "미달성"})
-        df_summary = pd.DataFrame(rows)
+    # 월별 KPI 누적표: 자동 집계 + 수동 입력 합산
+    df_summary = load_monthly_kpi_summary().rename(columns={
+        "도출 키워드": "도출 건수", "반영 완료": "반영 건수",
+    })
 
     df_det = df_derived.rename(columns={
         "keyword": "키워드", "kpi_month": "월", "usage_type": "활용처", "status": "상태",
@@ -1018,6 +1136,128 @@ with c4:
     st.progress(1.0 if kpi_pass else max(reflection_rate / 100, 0.03))
 
 st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════
+# 섹션 2-B: 월별 KPI 누적표
+# ══════════════════════════════════════════════════════
+st.markdown("""
+<div class="sec-hdr">
+  <div class="sh-t">월별 KPI 누적 현황</div>
+  <div class="sh-s">달이 바뀌면 자동으로 새 줄이 추가됩니다 · 과거 데이터가 없는 달은 아래 펼치기에서 직접 입력하세요</div>
+</div>""", unsafe_allow_html=True)
+
+df_monthly = load_monthly_kpi_summary()
+
+# 엑셀 다운로드 버튼
+_buf_m = io.BytesIO()
+with pd.ExcelWriter(_buf_m, engine="openpyxl") as _w:
+    df_monthly.to_excel(_w, index=False, sheet_name="월별 KPI 누적표")
+_monthly_excel = _buf_m.getvalue()
+
+_col_dl_m, _ = st.columns([2, 5])
+with _col_dl_m:
+    st.download_button(
+        "⬇ 월별 KPI 엑셀 다운로드",
+        data=_monthly_excel,
+        file_name=f"monthly_kpi_{CURRENT_MONTH}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+
+if df_monthly.empty:
+    st.info("아직 집계할 데이터가 없습니다. 도출 키워드를 등록하거나 아래에서 직접 입력해 주세요.")
+else:
+    # 달성 여부 열만 색상 적용 (HTML 테이블로 렌더링)
+    def _monthly_row_html(row) -> str:
+        status = row["KPI 달성"]
+        if "달성" in status and "미달성" not in status:
+            sc = "color:#1d4ed8;font-weight:700"
+        elif "진행" in status:
+            sc = "color:#92400e;font-weight:700"
+        else:
+            sc = "color:#dc2626;font-weight:700"
+        return (
+            f"<tr>"
+            f"<td style='padding:6px 12px'>{row['월']}</td>"
+            f"<td style='padding:6px 12px;text-align:center'>{row['도출 키워드']}건</td>"
+            f"<td style='padding:6px 12px;text-align:center'>{row['반영 완료']}건</td>"
+            f"<td style='padding:6px 12px;text-align:center'>{row['반영률(%)']}%</td>"
+            f"<td style='padding:6px 12px;text-align:center;{sc}'>{status}</td>"
+            f"<td style='padding:6px 12px;color:#64748b;font-size:0.85rem'>{row['비고']}</td>"
+            f"</tr>"
+        )
+
+    rows_html = "\n".join(_monthly_row_html(r) for _, r in df_monthly.iterrows())
+    st.markdown(f"""
+<table style='width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;font-size:0.92rem'>
+  <thead style='background:#f1f5f9;font-weight:700;color:#475569'>
+    <tr>
+      <th style='padding:8px 12px;text-align:left'>월</th>
+      <th style='padding:8px 12px'>도출 키워드</th>
+      <th style='padding:8px 12px'>반영 완료</th>
+      <th style='padding:8px 12px'>반영률</th>
+      <th style='padding:8px 12px'>KPI 달성</th>
+      <th style='padding:8px 12px;text-align:left'>비고</th>
+    </tr>
+  </thead>
+  <tbody>
+    {rows_html}
+  </tbody>
+</table>""", unsafe_allow_html=True)
+
+st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
+
+# 과거 달 수동 입력 expander
+with st.expander("📝 과거 달 KPI 직접 입력 (시스템에 기록이 없는 달)"):
+    st.caption("이번 달은 자동 집계됩니다. 기록이 없는 과거 달의 수치를 여기서 입력하면 누적표에 추가됩니다.")
+
+    # 등록된 수동 데이터 목록
+    df_manual_cur = _read_manual_all()
+    if not df_manual_cur.empty:
+        st.markdown("**저장된 수동 입력 데이터**")
+        for _, mr in df_manual_cur.iterrows():
+            _mc1, _mc2, _mc3, _mc4, _mc5 = st.columns([2, 1.2, 1.2, 2.5, 1])
+            with _mc1: st.text(mr["kpi_month"])
+            with _mc2: st.text(f"도출 {mr['manual_derived']}건")
+            with _mc3: st.text(f"반영 {mr['manual_reflected']}건")
+            with _mc4: st.text(mr.get("note", "") or "")
+            with _mc5:
+                if st.button("삭제", key=f"del_manual_{mr['kpi_month']}", type="secondary"):
+                    delete_manual_month(mr["kpi_month"])
+                    st.rerun()
+        st.markdown("---")
+
+    st.markdown("**새 달 추가**")
+    _ma, _mb, _mc, _md = st.columns([2, 1.2, 1.2, 3])
+    with _ma:
+        m_month = st.text_input("월 (YYYY-MM)", placeholder="예: 2026-05", key="manual_month_input")
+    with _mb:
+        m_derived = st.number_input("도출 건수", min_value=0, step=1, key="manual_derived_input")
+    with _mc:
+        m_reflected = st.number_input("반영 건수", min_value=0, step=1, key="manual_reflected_input")
+    with _md:
+        m_note = st.text_input("비고 (선택)", placeholder="예: 시스템 도입 전 기록", key="manual_note_input")
+
+    if st.button("저장", type="primary", key="manual_save_btn"):
+        _month_str = m_month.strip()
+        _auto_months = set(df_monthly[df_monthly["비고"] == "자동 집계"]["월"].tolist()) if not df_monthly.empty else set()
+        if not re.match(r"^\d{4}-\d{2}$", _month_str):
+            st.warning("월은 YYYY-MM 형식으로 입력해 주세요. (예: 2026-05)")
+        elif _month_str == CURRENT_MONTH:
+            st.warning("이번 달은 자동 집계되므로 수동 입력하지 않아도 됩니다.")
+        elif _month_str in _auto_months:
+            st.warning(f"{_month_str}은 자동 집계 데이터가 있어 수동 입력이 필요 없습니다.")
+        elif int(m_reflected) > int(m_derived):
+            st.warning("반영 건수는 도출 건수보다 클 수 없습니다.")
+        else:
+            if add_manual_month(_month_str, int(m_derived), int(m_reflected), m_note.strip()):
+                st.success(f"{_month_str} KPI 저장 완료!")
+                st.rerun()
+            else:
+                st.error("저장 실패. 다시 시도해 주세요.")
+
+st.markdown("<div style='margin-top:2rem'></div>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════
