@@ -12,11 +12,15 @@ GitHub 연동(GITHUB_TOKEN + GITHUB_REPO 설정 시):
 
 import io
 import os
-from datetime import datetime, date
+import re
+from datetime import datetime, date, timedelta, timezone
+from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests as _requests
 import streamlit as st
 
 import github_storage as gh
@@ -510,7 +514,7 @@ def remove_tracked_keyword(keyword: str):
 # ══════════════════════════════════════════════════════
 # 트렌드 데이터 로드 (1분 캐시)
 # ══════════════════════════════════════════════════════
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600 * 8)   # 8시간 캐시 — 매일 자동 수집 주기에 맞춤
 def load_trends() -> pd.DataFrame:
     if not os.path.exists(TRENDS_CSV):
         return pd.DataFrame()
@@ -595,11 +599,147 @@ def change_badge(pct) -> str:
 
 
 # ══════════════════════════════════════════════════════
-# 뉴스 키워드 (1시간 캐시)
+# 뉴스 키워드 (1시간 캐시) — 급상승 키워드 발굴용
 # ══════════════════════════════════════════════════════
 @st.cache_data(ttl=3600, persist="disk")
 def get_news_keywords():
     return fetch_news_keywords(top_n=20)
+
+
+# ══════════════════════════════════════════════════════
+# 이번 주 키워드 인사이트 — 네이버 뉴스 검색 API
+# ══════════════════════════════════════════════════════
+# 캐시 정책:
+#   fetch_news_articles  → 24시간 캐시 (버튼 클릭 시에만 호출, 자동 호출 없음)
+#   load_trends          → 8시간 캐시  (트렌드 그래프)
+#   get_news_keywords    → 1시간 캐시  (급상승 키워드 발굴)
+#   _read_derived_all 등 CRUD → 캐시 없음 (쓰기 후 즉시 반영 필요)
+
+_NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
+
+# 알려진 IT·보안 매체 도메인 → 한글 이름 매핑
+_MEDIA_MAP: dict = {
+    "chosun.com": "조선일보", "donga.com": "동아일보",
+    "joongang.co.kr": "중앙일보", "khan.co.kr": "경향신문",
+    "hani.co.kr": "한겨레", "mk.co.kr": "매일경제",
+    "hankyung.com": "한국경제", "heraldcorp.com": "헤럴드경제",
+    "yonhapnews.co.kr": "연합뉴스", "yna.co.kr": "연합뉴스",
+    "zdnet.co.kr": "ZDNet Korea", "etnews.com": "전자신문",
+    "dt.co.kr": "디지털타임스", "itworld.co.kr": "IT World",
+    "ciokorea.com": "CIO Korea", "boannews.com": "보안뉴스",
+    "datanet.co.kr": "데이터넷", "comworld.co.kr": "컴퓨터월드",
+    "ahnlab.com": "안랩", "krcert.or.kr": "KISA",
+    "securityweek.com": "Security Week", "theregister.com": "The Register",
+}
+
+
+def _media_name(url: str) -> str:
+    """URL에서 매체명을 추출합니다."""
+    try:
+        host = urlparse(url).netloc.lower().replace("www.", "").replace("m.", "")
+        for domain, name in _MEDIA_MAP.items():
+            if domain in host:
+                return name
+        return host.split(".")[0].upper()
+    except Exception:
+        return "—"
+
+
+def _strip_html(text: str) -> str:
+    """HTML 태그를 제거합니다."""
+    return re.sub(r"<[^>]+>", "", text or "").strip()
+
+
+def _parse_pub_date(date_str: str) -> datetime:
+    """네이버 뉴스 pubDate(RFC2822)를 datetime으로 변환합니다."""
+    try:
+        dt = parsedate_to_datetime(date_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _similar_title(t1: str, t2: str) -> bool:
+    """두 기사 제목이 80% 이상 겹치면 중복으로 봅니다."""
+    t1, t2 = t1[:40].lower(), t2[:40].lower()
+    if not t1 or not t2:
+        return False
+    common = sum(c in t2 for c in t1)
+    return common / max(len(t1), 1) >= 0.8
+
+
+@st.cache_data(ttl=86400, show_spinner=False)   # 24시간 캐시
+def fetch_news_articles(keywords: tuple, days: int = 7) -> dict:
+    """
+    네이버 뉴스 검색 API로 키워드별 최신 기사를 가져옵니다.
+    - keywords: 튜플 (캐시 키로 사용하려면 해시 가능해야 함)
+    - 반환: {keyword: [{"title","media","date","summary","url"}, ...]}
+    - 자동 호출 금지 — 버튼 클릭 시에만 호출하세요.
+    """
+    from dotenv import load_dotenv
+    load_dotenv()
+    cid = os.getenv("NAVER_CLIENT_ID", "").strip()
+    csc = os.getenv("NAVER_CLIENT_SECRET", "").strip()
+
+    if not cid or not csc:
+        return {}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    result: dict = {}
+
+    for kw in keywords:
+        articles: list = []
+        seen_urls:   set = set()
+        seen_titles: list = []
+        try:
+            resp = _requests.get(
+                _NAVER_NEWS_URL,
+                headers={"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": csc},
+                params={"query": kw, "display": 20, "sort": "date"},
+                timeout=6,
+            )
+            if resp.status_code != 200:
+                result[kw] = []
+                continue
+
+            items = resp.json().get("items", [])
+            for item in items:
+                pub_dt = _parse_pub_date(item.get("pubDate", ""))
+                if pub_dt < cutoff:
+                    continue
+
+                url   = item.get("originallink") or item.get("link", "")
+                title = _strip_html(item.get("title", ""))
+                desc  = _strip_html(item.get("description", ""))
+
+                # URL 중복 제거
+                if url in seen_urls:
+                    continue
+                # 유사 제목 중복 제거
+                if any(_similar_title(title, t) for t in seen_titles):
+                    continue
+
+                seen_urls.add(url)
+                seen_titles.append(title)
+                articles.append({
+                    "title":   title,
+                    "media":   _media_name(url),
+                    "date":    pub_dt.strftime("%Y-%m-%d"),
+                    "summary": desc[:120] + ("…" if len(desc) > 120 else ""),
+                    "url":     url,
+                    "_dt":     pub_dt,
+                })
+                if len(articles) >= 3:
+                    break
+
+        except Exception:
+            articles = []
+
+        result[kw] = sorted(articles, key=lambda x: x["_dt"], reverse=True)
+
+    return result
 
 
 # ══════════════════════════════════════════════════════
@@ -981,10 +1121,127 @@ else:
             st.success(f"'{del_kw}' 삭제됐습니다.")
             st.rerun()
 
+st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════
+# 섹션 4: 이번 주 키워드 인사이트
+# ══════════════════════════════════════════════════════
+# ※ 이 섹션은 반영률 집계와 무관한 참고 자료입니다.
+# ※ 버튼을 눌렀을 때만 API 호출 — 페이지 로드 시 자동 호출 없음.
+# ══════════════════════════════════════════════════════
+st.markdown("""
+<div class="sec-hdr-main">
+  <div class="sh-t">이번 주 키워드 인사이트</div>
+  <div class="sh-s">최근 7일 국내 기사 · 네이버 뉴스 검색 API · 참고 자료용 — 반영률 집계 미포함</div>
+</div>""", unsafe_allow_html=True)
+
+# ── 키워드 선택 (session_state 유지) ─────────────────
+_derived_kw_list = df_cur["키워드"].tolist() if not df_cur.empty else []
+
+if "insight_sel_kws" not in st.session_state:
+    st.session_state["insight_sel_kws"] = _derived_kw_list[:5]  # 기본: 이번 달 도출 키워드 (최대 5개)
+if "insight_articles" not in st.session_state:
+    st.session_state["insight_articles"] = None   # None = 아직 미조회
+
+# 선택 목록에서 삭제된 키워드 정리
+_available_kws = _derived_kw_list if _derived_kw_list else []
+_sel_cleaned   = [k for k in st.session_state["insight_sel_kws"] if k in _available_kws]
+if _sel_cleaned != st.session_state["insight_sel_kws"]:
+    st.session_state["insight_sel_kws"] = _sel_cleaned
+
+col_kw_sel, col_fetch, col_refresh = st.columns([6, 1.5, 1.2])
+with col_kw_sel:
+    sel_kws = st.multiselect(
+        "조회할 키워드 (최대 5개)",
+        options=_available_kws,
+        default=st.session_state["insight_sel_kws"],
+        max_selections=5,
+        placeholder="키워드를 선택하세요",
+        label_visibility="collapsed",
+        key="insight_multisel",
+    )
+    st.session_state["insight_sel_kws"] = sel_kws
+
+with col_fetch:
+    fetch_clicked = st.button(
+        "이번 주 기사 불러오기",
+        use_container_width=True,
+        type="primary",
+        key="btn_fetch_news",
+        disabled=not sel_kws,
+    )
+
+with col_refresh:
+    refresh_clicked = st.button(
+        "새로고침",
+        use_container_width=True,
+        type="secondary",
+        key="btn_refresh_news",
+        disabled=st.session_state["insight_articles"] is None,
+    )
+
+# ── 새로고침: 해당 섹션 캐시만 비우고 재조회 ───────────
+if refresh_clicked and sel_kws:
+    fetch_news_articles.clear()           # 뉴스 캐시만 비움 (트렌드·뉴스발굴 캐시는 유지)
+    st.session_state["insight_articles"] = None
+    st.rerun()
+
+# ── 기사 불러오기: 버튼 클릭 시에만 API 호출 ──────────
+if fetch_clicked and sel_kws:
+    with st.spinner(f"네이버 뉴스에서 최근 7일 기사를 불러오는 중…"):
+        st.session_state["insight_articles"] = fetch_news_articles(
+            keywords=tuple(sel_kws),
+            days=7,
+        )
+    st.rerun()
+
+# ── 결과 표시 ─────────────────────────────────────────
+articles_data = st.session_state["insight_articles"]
+
+if articles_data is None:
+    st.info("키워드를 선택한 뒤 '이번 주 기사 불러오기'를 눌러 주세요.")
+elif not articles_data:
+    st.warning("API 키를 확인하거나 잠시 후 다시 시도해 주세요.")
+else:
+    # 전체 기사 수집 후 날짜순 정렬, 최대 10건
+    all_articles: list = []
+    for kw, arts in articles_data.items():
+        for a in arts:
+            all_articles.append({**a, "_kw": kw})
+
+    all_articles.sort(key=lambda x: x["_dt"], reverse=True)
+    all_articles = all_articles[:10]
+
+    if not all_articles:
+        st.info("최근 7일 이내 해당 키워드 기사가 없습니다.")
+    else:
+        st.caption(f"총 {len(all_articles)}건 · 24시간 캐시 적용 (새로고침 버튼으로 갱신)")
+        for art in all_articles:
+            with st.container():
+                kw_badge = (
+                    f"<span style='background:#EFF6FF;color:#1D4ED8;border-radius:4px;"
+                    f"padding:1px 7px;font-size:11px;font-weight:600'>{art['_kw']}</span>"
+                )
+                media_str = f"<span style='color:#64748B;font-size:12px'>{art['media']} · {art['date']}</span>"
+                st.markdown(
+                    f"{kw_badge} &nbsp; {media_str}",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f"**[{art['title']}]({art['url']})**",
+                    unsafe_allow_html=False,
+                )
+                if art["summary"]:
+                    st.markdown(
+                        f"<span style='font-size:13px;color:#475569'>{art['summary']}</span>",
+                        unsafe_allow_html=True,
+                    )
+                st.markdown("<hr style='margin:8px 0;border-color:#F1F5F9'>", unsafe_allow_html=True)
+
 st.markdown("<div style='margin-top:3rem'></div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
-# 섹션 4: 트렌드 키워드 탐색 (상위)
+# 섹션 5: 트렌드 키워드 탐색 (상위)
 # ══════════════════════════════════════════════════════
 st.markdown("""
 <div class="sec-hdr-main">
