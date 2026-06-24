@@ -840,6 +840,11 @@ def fetch_news_articles(keywords: tuple, days: int = 7) -> dict:
     load_dotenv()
     cid = os.getenv("NAVER_CLIENT_ID", "").strip()
     csc = os.getenv("NAVER_CLIENT_SECRET", "").strip()
+    # Streamlit Cloud: .env 파일이 없으므로 st.secrets에서 읽기
+    if not cid:
+        cid = st.secrets.get("NAVER_CLIENT_ID", "").strip()
+    if not csc:
+        csc = st.secrets.get("NAVER_CLIENT_SECRET", "").strip()
 
     if not cid or not csc:
         return {}
