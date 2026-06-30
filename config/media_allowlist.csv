@@ -1,0 +1,42 @@
+media_id,media_name,domains,enabled,priority_tier,media_type,note,updated_at
+naver_news,네이버뉴스,n.news.naver.com,true,1,포털,네이버 자체 뉴스,2026-06-30
+yonhap,연합뉴스,yna.co.kr|yonhapnews.co.kr,true,1,통신사,국내 최대 통신사,2026-06-30
+newsis,뉴시스,newsis.com,true,1,통신사,국내 통신사,2026-06-30
+news1,뉴스1,news1.kr,true,1,통신사,국내 통신사,2026-06-30
+chosun,조선일보,chosun.com,true,1,종합지,,2026-06-30
+joongang,중앙일보,joongang.co.kr|joins.com,true,1,종합지,,2026-06-30
+donga,동아일보,donga.com,true,1,종합지,,2026-06-30
+hankook,한국일보,hankookilbo.com,true,2,종합지,,2026-06-30
+kyunghyang,경향신문,khan.co.kr,true,2,종합지,,2026-06-30
+hankyoreh,한겨레,hani.co.kr,true,2,종합지,,2026-06-30
+mk,매일경제,mk.co.kr,true,1,경제지,,2026-06-30
+hankyung,한국경제,hankyung.com,true,1,경제지,,2026-06-30
+sedaily,서울경제,sedaily.com,true,2,경제지,,2026-06-30
+etoday,이투데이,etoday.co.kr,true,2,경제지,,2026-06-30
+mt,머니투데이,mt.co.kr,true,2,경제지,,2026-06-30
+fnnews,파이낸셜뉴스,fnnews.com,true,2,경제지,,2026-06-30
+heraldcorp,헤럴드경제,heraldcorp.com,true,2,경제지,,2026-06-30
+asiae,아시아경제,asiae.co.kr,true,2,경제지,,2026-06-30
+inbiz,인베스트조선,biz.chosun.com,true,2,경제지,조선비즈,2026-06-30
+zdnet,ZDNet Korea,zdnet.co.kr,true,1,IT전문지,,2026-06-30
+etnews,전자신문,etnews.com,true,1,IT전문지,,2026-06-30
+dt,디지털타임스,dt.co.kr,true,2,IT전문지,,2026-06-30
+inews24,아이뉴스24,inews24.com,true,2,IT전문지,,2026-06-30
+itchosun,IT조선,it.chosun.com,true,2,IT전문지,,2026-06-30
+bloter,블로터,bloter.net,true,2,IT전문지,,2026-06-30
+itdaily,IT데일리,itdaily.kr,true,3,IT전문지,,2026-06-30
+itbiznews,IT비즈뉴스,itbiznews.com,true,3,IT전문지,,2026-06-30
+boannews,보안뉴스,boannews.com,true,1,보안전문지,,2026-06-30
+dailysecu,데일리시큐,dailysecu.com,true,2,보안전문지,,2026-06-30
+securityworld,시큐리티월드,securityworldmag.com,true,3,보안전문지,,2026-06-30
+aitimes,AI타임스,aitimes.com,true,2,IT전문지,AI 전문,2026-06-30
+irobotnews,로봇신문,irobotnews.com,true,3,IT전문지,로봇·AI,2026-06-30
+datanet,데이터넷,datanet.co.kr,true,3,IT전문지,네트워크·보안,2026-06-30
+itworld,IT월드,itworld.co.kr,true,3,IT전문지,IDG Korea,2026-06-30
+cio,CIO Korea,ciokorea.com,true,3,IT전문지,IDG Korea,2026-06-30
+cctvnews,씨씨티브이뉴스,cctvnews.co.kr,true,4,IT전문지,영상보안,2026-06-30
+kbs,KBS,kbs.co.kr,true,1,방송,,2026-06-30
+mbc,MBC,imnews.imbc.com,true,1,방송,,2026-06-30
+sbs,SBS,news.sbs.co.kr,true,1,방송,,2026-06-30
+ytn,YTN,ytn.co.kr,true,1,방송,,2026-06-30
+mbn,MBN,mbn.co.kr,true,2,방송,,2026-06-30
