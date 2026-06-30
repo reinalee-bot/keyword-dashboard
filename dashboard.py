@@ -112,6 +112,17 @@ hr{border-color:#DCE3EA!important;margin:1.2rem 0!important}
 .notice-box{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 14px;font-size:13px;color:#1e40af;margin:.6rem 0}
 .warn-box{background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:10px 14px;font-size:13px;color:#92400E;margin:.6rem 0}
 
+/* ─ 익스팬더 — _arr 텍스트 겹침 수정 ─ */
+[data-testid="stExpander"]>details{border:1px solid #DCE3EA;border-radius:8px;overflow:hidden;margin:.5rem 0}
+[data-testid="stExpander"]>details>summary{display:flex!important;align-items:center!important;list-style:none!important;padding:10px 16px!important;cursor:pointer!important;background:#fff!important;user-select:none!important;gap:0!important}
+[data-testid="stExpander"]>details>summary::-webkit-details-marker{display:none!important}
+[data-testid="stExpander"]>details>summary::marker{display:none!important}
+/* 내부 클래스명 텍스트(_arr 등) 숨김 */
+[data-testid="stExpander"] summary>span{font-size:0!important;line-height:0!important;overflow:hidden!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:20px!important;height:20px!important;flex-shrink:0!important}
+[data-testid="stExpander"] summary>span svg{width:16px!important;height:16px!important;display:block!important}
+/* 레이블 텍스트 */
+[data-testid="stExpander"] summary p,[data-testid="stExpander"] summary div>p{margin:0!important;font-size:14px!important;font-weight:600!important;color:#101828!important;line-height:1.5!important}
+
 @media(max-width:768px){
   .block-container{padding:0 1rem 3rem!important}
   .kd-header{padding:8px 1rem;margin:0 -1rem;flex-wrap:wrap;gap:6px}
