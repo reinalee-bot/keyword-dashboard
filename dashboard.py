@@ -1316,7 +1316,8 @@ background:#F7F9FC;border-radius:6px;padding:8px 14px;margin-bottom:1rem;flex-wr
                 batch_cl=clusters[ci:ci+2]; card_c=st.columns(len(batch_cl),gap="medium")
                 for col,cl in zip(card_c,batch_cl):
                     rep=cl["rep"]; others=[a for a in cl["cluster"] if a["url"]!=rep["url"]]
-                    ak=nf.article_key(rep.get("url",""))
+                    _url_base=nf.article_key(rep.get("url","") or f"no_url_{ci}")
+                    ak=hashlib.md5(f"{kw}::{ci}::{_url_base}".encode()).hexdigest()[:12]
                     with col:
                         with st.container(border=True):
                             badges=[f"<span class='art-kw'>{rep.get('search_keyword','')}</span>"]
