@@ -531,8 +531,9 @@ def get_last_collection_time() -> str:
     try:
         df = pd.read_csv(TRENDS_CSV, usecols=["collected_at"])
         if df.empty: return "수집 기록 없음"
-        kst = pd.to_datetime(df["collected_at"]).max() + timedelta(hours=9)
-        return kst.strftime("%Y.%m.%d %H:%M")
+        # collected_at은 로컬(KST) 시각으로 저장됨 — 추가 변환 불필요
+        ts = pd.to_datetime(df["collected_at"]).max()
+        return ts.strftime("%Y.%m.%d %H:%M")
     except: return "—"
 
 
