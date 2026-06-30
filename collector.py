@@ -26,7 +26,7 @@ CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET", "").strip()
 
 DATA_DIR       = os.path.join(os.path.dirname(__file__), "data")
 TRENDS_CSV     = os.path.join(DATA_DIR, "trends.csv")
-DERIVED_CSV    = os.path.join(DATA_DIR, "derived_keywords.csv")
+DERIVED_CSV    = os.path.join(DATA_DIR, "tracked_keywords.csv")
 COLS           = ["keyword", "date", "ratio", "source", "collected_at"]
 API_URL        = "https://openapi.naver.com/v1/datalab/search"
 BATCH          = 5   # 네이버 API 한 번 요청에 최대 5개
