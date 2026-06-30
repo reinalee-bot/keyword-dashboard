@@ -1,14 +1,11 @@
 """
 SCK 커뮤니케이션팀 키워드 트렌드 대시보드 — 5탭 구조
-BUILD: 2026-06-30-KEYWORD-V5
+BUILD: ICON-FONT-FIX-V1
 
-V5 핵심 변경:
-- st.expander() 전면 제거 → collapsible_header() 함수 대체
-  (근본 원인: Streamlit 1.58 expander 내부 span이 CSS 접근 불가 레이어에서 렌더링,
-   _arr 클래스명이 텍스트로 노출됨 → CSS 해킹으로는 해결 불가)
-- 탭2 빠른 등록: form 내부 expander 제거 → 선택 필드를 form 외부로 이동
-- 탭4 관련 보도: expander → 버튼+세션스테이트 토글
-- CSS: _arr 핵 전부 제거, 깔끔하게 정리
+DIAGNOSTIC BUILD:
+- 사용자 정의 CSS 전체 비활성화 (레이아웃 CSS 포함)
+- Material Symbols 아이콘 텍스트 노출 테스트 추가
+- _arr 문구 원인 진단: CSS font-family 전역 강제 vs Streamlit 내부 이슈
 """
 import hashlib, io, os, re
 from datetime import datetime, date, timedelta, timezone
@@ -24,7 +21,7 @@ import news_fetcher as nf
 from collector import collect_single_keyword
 
 # ── 상수 ──────────────────────────────────────────────────
-BUILD_VERSION = "2026-06-30-KEYWORD-V5"
+BUILD_VERSION = "ICON-FONT-FIX-V1"
 
 BASE_DIR    = os.path.dirname(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "data")
@@ -48,120 +45,35 @@ USAGES = ["PR 기사","온드미디어","공통"]
 st.set_page_config(page_title="키워드 인텔리전스 | SCK·STK",
                    page_icon="📊", layout="wide")
 
-# ── CSS ──────────────────────────────────────────────────
-# st.expander 미사용 → _arr 핵 불필요. 순수 레이아웃 CSS만 포함.
-st.markdown("""
-<style>
-@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+# ── CSS: DIAGNOSTIC — 사용자 정의 CSS 전체 비활성화 ─────────
+# 목적: _arr 문구가 CSS 없이 사라지는지 확인
+# 결과 확인 후 CSS 복구 예정
+# st.markdown("""<style>...</style>""", unsafe_allow_html=True)
 
-/* 폰트: 구체적 태그만 지정 */
-html, body, p, a, button, input, select, textarea,
-h1, h2, h3, h4, h5, h6, li, td, th, label,
-.stMarkdown, .stText, .stCaption {
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont,
-               'Apple SD Gothic Neo', sans-serif !important;
-  word-break: keep-all;
-}
+# ── DIAGNOSTIC: Material Symbols 아이콘 텍스트 노출 테스트 ───
+# 아이콘이 정상이면 ↓ 모양, 깨지면 "keyboard_arrow_right" 같은 텍스트 표시
+st.info(
+    f"**BUILD: {BUILD_VERSION}** — CSS 전체 비활성화 진단 빌드\n\n"
+    "아래 아이콘 렌더링 결과를 확인하세요:\n"
+    "- 정상: 아이콘 이미지 표시\n"
+    "- 비정상: 아이콘 이름이 텍스트로 표시 (예: keyboard_arrow_right)"
+)
+col_a, col_b, col_c, col_d = st.columns(4)
+with col_a:
+    st.markdown("**테스트 1** (arrow_drop_down)")
+    st.markdown(":material/arrow_drop_down:")
+with col_b:
+    st.markdown("**테스트 2** (keyboard_arrow_right)")
+    st.markdown(":material/keyboard_arrow_right:")
+with col_c:
+    st.markdown("**테스트 3** (expand_more)")
+    st.markdown(":material/expand_more:")
+with col_d:
+    st.markdown("**테스트 4** (close)")
+    st.markdown(":material/close:")
 
-/* 시스템 UI 제거 */
-#MainMenu, footer, .stApp > header,
-[data-testid="stToolbar"], [data-testid="stDecoration"] { display: none !important; }
-
-/* 레이아웃 */
-.block-container { max-width: 1400px !important; padding: 0 2rem 4rem !important; margin: 0 auto !important; }
-.stApp { background: #F7F9FC; }
-
-/* 탭 */
-[data-testid="stTabs"] [role="tablist"] { border-bottom: 2px solid #DCE3EA; gap: 0; padding: 0; }
-[data-testid="stTabs"] [role="tab"] { font-weight: 600 !important; font-size: 14px !important; color: #667085 !important; padding: 10px 20px !important; border-bottom: 3px solid transparent !important; margin-bottom: -2px !important; }
-[data-testid="stTabs"] [role="tab"][aria-selected="true"] { color: #2F6BFF !important; border-bottom: 3px solid #2F6BFF !important; background: transparent !important; }
-[data-testid="stTabs"] [role="tab"]:hover { color: #2F6BFF !important; background: #F0F5FF !important; }
-[data-testid="stTabsContent"] { padding-top: 1.6rem; }
-
-/* 헤더 */
-.kd-header { display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid #DCE3EA; padding: 9px 2rem; margin: 0 -2rem .5rem -2rem; }
-.kd-mark { width: 26px; height: 26px; background: #2F6BFF; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 13px; font-weight: 800; }
-.kd-logo { display: flex; align-items: center; gap: 9px; }
-.kd-name { font-size: 13px; font-weight: 700; color: #102A43; }
-.kd-meta { display: flex; align-items: center; gap: 14px; font-size: 11.5px; color: #667085; }
-.kd-live { background: #F0FDF4; color: #166534; padding: 3px 10px; border-radius: 20px; font-weight: 700; font-size: 11px; }
-.kd-live::before { content: "● "; color: #16A34A; font-size: 8px; }
-
-/* 히어로 */
-.kd-hero { padding: 1.2rem 0 1rem; border-bottom: 1px solid #DCE3EA; margin-bottom: 1.4rem; }
-.kd-hero-title { font-size: 1.5rem; font-weight: 800; color: #102A43; margin: 0 0 .3rem; }
-.kd-hero-sub { font-size: .88rem; color: #667085; margin: 0; }
-
-/* 섹션 헤더 */
-.sh-main { margin: 0 0 1.2rem; border-left: 4px solid #2F6BFF; padding-left: 14px; }
-.sh-main .t { font-size: 1rem; font-weight: 800; color: #102A43; margin: 0; }
-.sh-main .s { font-size: 12px; color: #667085; margin: 3px 0 0; }
-.sh-sub { border-left: 3px solid #2F6BFF; padding-left: 11px; margin: 0 0 10px; }
-.sh-sub .t { font-size: 14px; font-weight: 700; color: #101828; margin: 0; }
-.sh-sub .s { font-size: 11.5px; color: #667085; margin: 2px 0 0; }
-
-/* KPI 카드 */
-.kpi-card { background: #fff; border: 1px solid #DCE3EA; border-radius: 12px; padding: 18px 20px 16px; }
-.kpi-lbl { font-size: 10px; font-weight: 700; color: #667085; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 9px; }
-.kpi-val { font-size: 2.4rem; font-weight: 800; color: #101828; line-height: 1; }
-.kpi-unit { font-size: .88rem; font-weight: 400; color: #667085; margin-left: 3px; }
-.kpi-hint { font-size: 11.5px; color: #667085; margin-top: 7px; }
-.bdg-pass { display: inline-block; background: #ECFDF5; color: #065F46; border-radius: 6px; padding: 6px 14px; font-weight: 700; font-size: 13px; margin-top: 9px; }
-.bdg-fail { display: inline-block; background: #FFF7ED; color: #9A3412; border-radius: 6px; padding: 6px 14px; font-weight: 700; font-size: 13px; margin-top: 9px; }
-
-/* 태그 */
-.tag-pr    { display:inline-block; background:#EFF6FF; color:#1e40af; border-radius:4px; padding:2px 8px; font-size:11.5px; font-weight:600; }
-.tag-owned { display:inline-block; background:#FDF4FF; color:#7e22ce; border-radius:4px; padding:2px 8px; font-size:11.5px; font-weight:600; }
-.tag-common{ display:inline-block; background:#F0FDF4; color:#166534; border-radius:4px; padding:2px 8px; font-size:11.5px; font-weight:600; }
-.tag-none  { display:inline-block; background:#F1F5F9; color:#94A3B8; border-radius:4px; padding:2px 8px; font-size:11.5px; font-weight:600; }
-.tag-done  { display:inline-block; background:#ECFDF5; color:#065F46; border-radius:4px; padding:2px 8px; font-size:11.5px; font-weight:600; }
-.tag-todo  { display:inline-block; background:#F1F5F9; color:#475569; border-radius:4px; padding:2px 8px; font-size:11.5px; font-weight:600; }
-
-/* 기사 카드 */
-.art-kw        { display:inline-block; background:#EFF6FF; color:#1D4ED8; border-radius:4px; padding:2px 8px; font-size:11px; font-weight:700; margin-right:4px; }
-.art-type-pr   { display:inline-block; background:#FEF3C7; color:#92400E; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600; margin-right:4px; }
-.art-type-feat { display:inline-block; background:#EDE9FE; color:#5B21B6; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600; margin-right:4px; }
-.art-type-int  { display:inline-block; background:#FDF4FF; color:#7e22ce; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600; margin-right:4px; }
-.art-type-ev   { display:inline-block; background:#ECFDF5; color:#065F46; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600; margin-right:4px; }
-.art-type-gen  { display:inline-block; background:#F1F5F9; color:#475569; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600; margin-right:4px; }
-.art-media  { display:inline-block; background:#F0FDF4; color:#166534; border-radius:4px; padding:2px 7px; font-size:11px; font-weight:600; }
-.art-score  { display:inline-block; background:#F1F5F9; color:#475569; border-radius:20px; padding:2px 10px; font-size:11px; font-weight:600; }
-.art-meta   { font-size:12px; color:#667085; line-height:1.8; }
-.art-desc   { font-size:13px; color:#475569; line-height:1.65; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
-.art-status-err { font-size:12px; color:#DC2626; font-weight:600; }
-
-/* 트렌드 카드 */
-.tc-kw   { font-size:.98rem; font-weight:800; color:#101828; margin-bottom:9px; }
-.tc-row  { font-size:13px; color:#667085; margin:4px 0; line-height:1.5; }
-.tc-row strong { color:#101828; }
-.tc-wait { padding:24px 0; text-align:center; }
-.tc-wait-title { font-weight:700; color:#667085; font-size:13px; margin-bottom:4px; }
-.tc-wait-sub { font-size:12px; color:#94A3B8; }
-
-/* 접이식 섹션 (collapsible_header 전용) */
-.coll-hdr { display:flex; align-items:center; justify-content:space-between;
-            border:1px solid #DCE3EA; border-radius:8px; padding:10px 16px;
-            background:#fff; margin:.4rem 0; }
-.coll-hdr-title { font-size:14px; font-weight:600; color:#101828; margin:0; }
-.coll-body { border:1px solid #DCE3EA; border-top:none;
-             border-radius:0 0 8px 8px; padding:16px; background:#fff;
-             margin-bottom:.6rem; }
-
-/* 공통 */
-hr { border-color:#DCE3EA !important; margin:1.2rem 0 !important; }
-.stProgress > div > div { background:#2F6BFF !important; }
-.notice-box { background:#EFF6FF; border:1px solid #BFDBFE; border-radius:8px; padding:10px 14px; font-size:13px; color:#1e40af; margin:.6rem 0; }
-.warn-box   { background:#FEF3C7; border:1px solid #FDE68A; border-radius:8px; padding:10px 14px; font-size:13px; color:#92400E; margin:.6rem 0; }
-.th { font-size:10.5px; font-weight:700; color:#667085; text-transform:uppercase; letter-spacing:.05em; }
-.td { font-size:13px; line-height:1.65; }
-
-@media(max-width:768px){
-  .block-container { padding:0 .8rem 3rem !important; }
-  .kd-header { flex-wrap:wrap; gap:6px; }
-  .kpi-val { font-size:2rem; }
-}
-</style>
-""", unsafe_allow_html=True)
+st.markdown("---")
+# ────────────────────────────────────────────────────────────
 
 
 # ══════════════════════════════════════════════════════════
