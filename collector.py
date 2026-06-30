@@ -14,7 +14,7 @@ import pandas as pd
 import requests
 from dotenv import load_dotenv
 
-from keywords import KEYWORDS
+from keywords import KEYWORDS as _BASE_KEYWORDS
 
 # 터미널 한글 출력 설정
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -24,11 +24,31 @@ load_dotenv()
 CLIENT_ID     = os.getenv("NAVER_CLIENT_ID",     "").strip()
 CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET", "").strip()
 
-DATA_DIR   = os.path.join(os.path.dirname(__file__), "data")
-TRENDS_CSV = os.path.join(DATA_DIR, "trends.csv")
-COLS       = ["keyword", "date", "ratio", "source", "collected_at"]
-API_URL    = "https://openapi.naver.com/v1/datalab/search"
-BATCH      = 5   # 네이버 API 한 번 요청에 최대 5개
+DATA_DIR       = os.path.join(os.path.dirname(__file__), "data")
+TRENDS_CSV     = os.path.join(DATA_DIR, "trends.csv")
+DERIVED_CSV    = os.path.join(DATA_DIR, "derived_keywords.csv")
+COLS           = ["keyword", "date", "ratio", "source", "collected_at"]
+API_URL        = "https://openapi.naver.com/v1/datalab/search"
+BATCH          = 5   # 네이버 API 한 번 요청에 최대 5개
+
+
+def _load_all_keywords() -> list:
+    """기본 KEYWORDS + derived_keywords.csv 추적 키워드를 합산해 반환."""
+    all_kws: list = list(_BASE_KEYWORDS)
+    if os.path.exists(DERIVED_CSV):
+        try:
+            df = pd.read_csv(DERIVED_CSV, dtype=str)
+            if "keyword" in df.columns:
+                for kw in df["keyword"].dropna():
+                    kw = kw.strip()
+                    if kw and kw not in all_kws:
+                        all_kws.append(kw)
+        except Exception:
+            pass
+    return all_kws
+
+
+KEYWORDS = _load_all_keywords()
 
 
 # ══════════════════════════════════════════════
