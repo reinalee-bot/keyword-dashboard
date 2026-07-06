@@ -1163,6 +1163,9 @@ with tab3:
             _pre[_kw]={"n":compute_kw_stats(_dn),"g":compute_kw_stats(_dg),"dn":_dn,"dg":_dg}
 
         # STEP 2: 렌더링 (_pre 에서만 읽기)
+        def _chg_fmt(v):
+            return (f"+{v:.1f}%","#059669") if v>=0 else (f"{v:.1f}%","#DC2626")
+
         NCOLS   = min(3,len(sel_kws)) if sel_kws else 1
         COLORS5 = ["#2F6BFF","#10B981","#F59E0B","#EF4444","#8B5CF6"]
         card_cols = st.columns(NCOLS,gap="medium")
@@ -1171,7 +1174,6 @@ with tab3:
             _td  = _pre[_kw]
             _sn  = _td["n"]; _sg = _td["g"]
             _use = _sn if _sn else _sg
-            _src_lbl = "네이버" if _sn else ("구글" if _sg else "")
             _ref_df  = _td["dn"] if _sn else _td["dg"]
             _col_c   = COLORS5[idx_k%len(COLORS5)]
 
@@ -1188,16 +1190,42 @@ with tab3:
                                     unsafe_allow_html=True)
                         continue
 
-                    wcs = f"+{_use['wk_chg']:.1f}%" if _use['wk_chg']>=0 else f"{_use['wk_chg']:.1f}%"
-                    wcc = "#059669" if _use['wk_chg']>=0 else "#DC2626"
-                    acs = f"+{_use['avg_chg']:.1f}%" if _use['avg_chg']>=0 else f"{_use['avg_chg']:.1f}%"
-                    acc = "#059669" if _use['avg_chg']>=0 else "#DC2626"
-                    try:    peak_str=pd.Timestamp(_ref_df.loc[_ref_df["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
-                    except: peak_str="—"
-                    try:    last_str=pd.Timestamp(_ref_df["date"].max()).strftime("%Y.%m.%d")
-                    except: last_str="—"
-
-                    st.markdown(f"""
+                    if _sn and _sg:
+                        # 네이버 + 구글 양쪽 데이터 모두 있을 때: 2열 나란히 표시
+                        _nc,_gc = st.columns(2)
+                        with _nc:
+                            nwcs,nwcc = _chg_fmt(_sn['wk_chg'])
+                            nacs,nacc = _chg_fmt(_sn['avg_chg'])
+                            st.markdown(f"""<div style='font-size:11px;font-weight:700;color:#2F6BFF;margin-bottom:4px'>네이버 데이터랩</div>
+<div class='tc-row'>관심도 &nbsp;<strong>{_sn['current']:.0f}</strong></div>
+<div class='tc-row'>전주 대비 &nbsp;<strong style='color:{nwcc}'>{nwcs}</strong></div>
+<div class='tc-row'>4주 평균 &nbsp;<strong>{_sn['avg4']:.1f}</strong></div>
+<div class='tc-row'>이전 4주 대비 &nbsp;<strong style='color:{nacc}'>{nacs}</strong></div>""",unsafe_allow_html=True)
+                        with _gc:
+                            gwcs,gwcc = _chg_fmt(_sg['wk_chg'])
+                            gacs,gacc = _chg_fmt(_sg['avg_chg'])
+                            st.markdown(f"""<div style='font-size:11px;font-weight:700;color:#10B981;margin-bottom:4px'>구글 트렌드</div>
+<div class='tc-row'>관심도 &nbsp;<strong>{_sg['current']:.0f}</strong></div>
+<div class='tc-row'>전주 대비 &nbsp;<strong style='color:{gwcc}'>{gwcs}</strong></div>
+<div class='tc-row'>4주 평균 &nbsp;<strong>{_sg['avg4']:.1f}</strong></div>
+<div class='tc-row'>이전 4주 대비 &nbsp;<strong style='color:{gacc}'>{gacs}</strong></div>""",unsafe_allow_html=True)
+                        try:    peak_str=pd.Timestamp(_td["dn"].loc[_td["dn"]["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
+                        except: peak_str="—"
+                        try:    last_str=pd.Timestamp(_td["dn"]["date"].max()).strftime("%Y.%m.%d")
+                        except: last_str="—"
+                        st.markdown(f"""<div class='tc-row' style='margin-top:6px'>최고점 날짜 &nbsp;<strong>{peak_str}</strong></div>
+<div class='tc-row'>마지막 데이터 &nbsp;<strong>{last_str}</strong></div>
+<div class='tc-row'>검색량 추세 &nbsp; {_trend_badge(_sn['trend_label'],_sn['trend_tip'])}</div>""",unsafe_allow_html=True)
+                    else:
+                        # 단일 소스
+                        _src_lbl = "네이버" if _sn else "구글"
+                        wcs,wcc = _chg_fmt(_use['wk_chg'])
+                        acs,acc = _chg_fmt(_use['avg_chg'])
+                        try:    peak_str=pd.Timestamp(_ref_df.loc[_ref_df["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
+                        except: peak_str="—"
+                        try:    last_str=pd.Timestamp(_ref_df["date"].max()).strftime("%Y.%m.%d")
+                        except: last_str="—"
+                        st.markdown(f"""
 <div class='tc-row'>현재 관심도 &nbsp;<strong>{_use['current']:.0f}</strong>
   <span style='font-size:11px;color:#94A3B8'> ({_src_lbl})</span></div>
 <div class='tc-row'>전주 대비 &nbsp;<strong style='color:{wcc}'>{wcs}</strong></div>
