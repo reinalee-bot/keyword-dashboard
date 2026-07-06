@@ -16,7 +16,7 @@ import news_fetcher as nf
 from collector import collect_single_keyword
 
 # ── 상수 ──────────────────────────────────────────────────
-BUILD_VERSION = "2026-06-30-KEYWORD-V6"
+BUILD_VERSION = "2026-07-06-KEYWORD-V7"
 
 BASE_DIR    = os.path.dirname(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "data")
