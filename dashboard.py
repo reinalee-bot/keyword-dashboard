@@ -481,7 +481,7 @@ def remove_all_tracked():
 # ══════════════════════════════════════════════════════════
 # 트렌드 데이터
 # ══════════════════════════════════════════════════════════
-@st.cache_data(ttl=3600*8, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)   # 10분 — 8시간 캐시가 갱신 지연의 근본 원인이었음
 def load_trends() -> pd.DataFrame:
     if not os.path.exists(TRENDS_CSV): return pd.DataFrame()
     df = pd.read_csv(TRENDS_CSV)
@@ -1018,7 +1018,7 @@ with tab3:
     hidden_kws = st.session_state["hidden_kws"]
 
     if tracked_kws:
-        ba_,bb_,bc_,_ = st.columns([1.8,1.8,2.2,4])
+        ba_,bb_,bc_,bd_ = st.columns([1.8,1.8,2.2,2.4])
         with ba_:
             if st.button("그래프 전체 표시",key="t3_show_all",type="secondary",use_container_width=True):
                 st.session_state["hidden_kws"]=set(); st.rerun()
@@ -1029,6 +1029,11 @@ with tab3:
             if st.button(f"선택 추적 해제 (전체 {len(tracked_kws)}개)",key="t3_del_all",
                          type="secondary",use_container_width=True):
                 st.session_state["t3_conf_del"]=True
+        with bd_:
+            if st.button("데이터 새로고침",key="t3_refresh_trends",type="primary",
+                         use_container_width=True,help="trends.csv 캐시를 지우고 최신 데이터를 다시 읽습니다"):
+                load_trends.clear()
+                st.rerun()
 
         if st.session_state["t3_conf_del"]:
             st.markdown(f"<div class='warn-box'>추적 중인 키워드 <strong>{len(tracked_kws)}개</strong>를 모두 삭제하시겠습니까?</div>",
