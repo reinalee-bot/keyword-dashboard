@@ -1214,72 +1214,134 @@ with tab3:
 # TAB 4 · 키워드 관련 기사
 # ════════════════════════════════════════════════════════
 with tab4:
-    if "t4_results"    not in st.session_state: st.session_state["t4_results"]    = {}
-    if "t4_last_fetch" not in st.session_state: st.session_state["t4_last_fetch"] = None
-    if "t4_clusters"   not in st.session_state: st.session_state["t4_clusters"]   = {}
+    if "t4_results"     not in st.session_state: st.session_state["t4_results"]     = {}
+    if "t4_last_fetch"  not in st.session_state: st.session_state["t4_last_fetch"]  = None
+    if "t4_clusters"    not in st.session_state: st.session_state["t4_clusters"]    = {}
+    if "t4_mon_kws"     not in st.session_state: st.session_state["t4_mon_kws"]     = []
+    if "t4_mon_history" not in st.session_state: st.session_state["t4_mon_history"] = []
 
-    st.markdown("""<div class="sh-main"><div class="t">키워드 관련 기사</div>
-<div class="s">네이버 뉴스 검색 API · 주요 제휴·우선 매체 화이트리스트 · 화제성 추정 점수 제공</div></div>""",
+    def _t4_kw_add(kw: str) -> bool:
+        kw = kw.strip()
+        if kw and kw not in st.session_state["t4_mon_kws"] and len(st.session_state["t4_mon_kws"]) < 5:
+            st.session_state["t4_mon_kws"].append(kw)
+            return True
+        return False
+
+    st.markdown("""<div class="sh-main"><div class="t">키워드 관련 기사 모니터링</div>
+<div class="s">네이버 뉴스 검색 API · 주요 제휴·우선 매체 화이트리스트 · 화제성 추정 점수 제공 · 트렌드 탭과 독립 동작</div></div>""",
                 unsafe_allow_html=True)
-
-    t4_kw_pool = sorted(set(load_tracked_keywords())|(set(df_cur["키워드"].tolist()) if not df_cur.empty else set()))
 
     with st.container(border=True):
         st.markdown("**조회 조건**")
-        fa,fb = st.columns([7,3])
-        with fa:
-            t4_sel_kws=st.multiselect("분석 키워드 (최대 5개)",options=t4_kw_pool,
-                                       max_selections=5,placeholder="키워드를 선택하세요",
-                                       key="t4_sel_kws")
-        with fb:
-            t4_days=st.radio("조회 기간",["최근 7일","최근 14일","최근 30일"],
-                             horizontal=True,key="t4_days_r")
-        fc,fd,fe = st.columns([3,3,3])
-        with fc: t4_scope=st.selectbox("언론사 범위",["주요 제휴·우선 매체만","전체 뉴스 검색 결과"],key="t4_scope")
-        with fd: t4_type =st.selectbox("기사 유형",["전체","보도자료형","기획·분석","인터뷰","행사·현장","일반 기사"],key="t4_type")
-        with fe: t4_sort =st.selectbox("정렬",["추천순","화제성순","최신순"],key="t4_sort")
-        btn_a,btn_b = st.columns([3,1])
+
+        # ── 키워드 입력 (이 탭 전용 — 다른 탭 키워드·KPI와 무관) ─────
+        st.markdown("<p style='font-size:13px;font-weight:600;color:#344054;margin:0 0 8px'>"
+                    "분석 키워드 (최대 5개) — 직접 입력 가능</p>", unsafe_allow_html=True)
+
+        _mon_kws = st.session_state["t4_mon_kws"]
+
+        # 선택된 키워드 칩 (× 클릭 → 제거)
+        if _mon_kws:
+            _chip_cols = st.columns(5)
+            for _ci, _ckw in enumerate(_mon_kws):
+                with _chip_cols[_ci]:
+                    if st.button(f"× {_ckw}", key=f"t4_rm_{_ci}",
+                                 type="primary", use_container_width=True):
+                        st.session_state["t4_mon_kws"].pop(_ci); st.rerun()
+
+        # 텍스트 입력 폼 (Enter 또는 추가 버튼으로 키워드 등록)
+        if len(_mon_kws) < 5:
+            with st.form("t4_kw_add_form", clear_on_submit=True, border=False):
+                _fi1, _fi2 = st.columns([8, 1])
+                with _fi1:
+                    _new_kw = st.text_input("키워드 입력",
+                                            placeholder="키워드 입력 후 Enter 또는 추가 클릭",
+                                            label_visibility="collapsed")
+                with _fi2:
+                    _kw_add_btn = st.form_submit_button("추가", use_container_width=True)
+            if _kw_add_btn and _new_kw.strip():
+                _t4_kw_add(_new_kw); st.rerun()
+
+        # 트렌드 탭 키워드 불러오기 + 최근 검색 히스토리
+        _imp_col, _hist_col = st.columns([3, 7])
+        with _imp_col:
+            if st.button("↓ 트렌드 탭 키워드 불러오기", key="t4_mon_import",
+                         use_container_width=True, type="secondary"):
+                for _tk in load_tracked_keywords():
+                    _t4_kw_add(_tk)
+                st.rerun()
+        with _hist_col:
+            _hist = st.session_state["t4_mon_history"]
+            if _hist:
+                st.markdown("<span style='font-size:11.5px;color:#667085'>최근 검색: </span>",
+                            unsafe_allow_html=True)
+                _hc = st.columns(min(5, len(_hist)))
+                for _hi, _hkw in enumerate(_hist[:5]):
+                    with _hc[_hi]:
+                        if st.button(_hkw, key=f"t4_hist_{_hi}", type="secondary",
+                                     use_container_width=True):
+                            _t4_kw_add(_hkw); st.rerun()
+
+        st.markdown("<hr style='margin:.5rem 0 .8rem'>", unsafe_allow_html=True)
+
+        # 조회 기간 / 언론사 / 유형 / 정렬
+        t4_days = st.radio("조회 기간", ["최근 7일", "최근 14일", "최근 30일"],
+                           horizontal=True, key="t4_days_r")
+        fc, fd, fe = st.columns([3, 3, 3])
+        with fc: t4_scope = st.selectbox("언론사 범위", ["주요 제휴·우선 매체만", "전체 뉴스 검색 결과"], key="t4_scope")
+        with fd: t4_type  = st.selectbox("기사 유형", ["전체", "보도자료형", "기획·분석", "인터뷰", "행사·현장", "일반 기사"], key="t4_type")
+        with fe: t4_sort  = st.selectbox("정렬", ["추천순", "화제성순", "최신순"], key="t4_sort")
+
+        btn_a, btn_b = st.columns([3, 1])
+        _t4_cur_kws = st.session_state["t4_mon_kws"]
         with btn_a:
-            t4_fetch=st.button("이번 주 기사 불러오기",type="primary",use_container_width=True,
-                               key="t4_fetch_btn",disabled=not t4_sel_kws)
+            t4_fetch = st.button("이번 주 기사 불러오기", type="primary", use_container_width=True,
+                                 key="t4_fetch_btn", disabled=not _t4_cur_kws)
         with btn_b:
-            t4_reset=st.button("결과 지우기",type="secondary",use_container_width=True,key="t4_rf_btn")
-        last_f=st.session_state.get("t4_last_fetch")
+            t4_reset = st.button("결과 지우기", type="secondary", use_container_width=True, key="t4_rf_btn")
+        last_f = st.session_state.get("t4_last_fetch")
         if last_f:
-            last_str=last_f.strftime("%Y.%m.%d %H:%M") if hasattr(last_f,"strftime") else str(last_f)
+            last_str = last_f.strftime("%Y.%m.%d %H:%M") if hasattr(last_f, "strftime") else str(last_f)
             st.caption(f"마지막 업데이트 {last_str} KST")
         else:
-            st.caption("키워드를 선택한 뒤 '이번 주 기사 불러오기'를 눌러주세요.")
+            st.caption("키워드를 입력한 뒤 '이번 주 기사 불러오기'를 눌러주세요.")
 
     if t4_reset:
         st.session_state["t4_results"]={}; st.session_state["t4_clusters"]={}
         st.session_state["t4_last_fetch"]=None; st.rerun()
 
-    if t4_fetch and t4_sel_kws:
-        days_map={"최근 7일":7,"최근 14일":14,"최근 30일":30}
-        n_days=days_map.get(t4_days,7)
-        date_to  =datetime.now().strftime("%Y-%m-%d")
-        date_from=(datetime.now()-timedelta(days=n_days)).strftime("%Y-%m-%d")
-        sort_api ="date" if t4_sort=="최신순" else "sim"
-        scope_key="whitelist" if "주요" in t4_scope else "all"
-        type_f   ="" if t4_type=="전체" else t4_type
-        cid,csc  =_get_naver_creds()
-        new_results={}; new_clusters={}
-        prog=st.progress(0,"기사 수집 중…")
-        for i,kw in enumerate(t4_sel_kws):
-            prog.progress(i/max(len(t4_sel_kws),1),f"'{kw}' 기사 수집 중 ({i+1}/{len(t4_sel_kws)})")
-            _res=nf.fetch_articles_for_keyword(keyword=kw,date_from=date_from,date_to=date_to,
-                                               sort_api=sort_api,media_scope=scope_key,
-                                               article_type_filter=type_f,cid=cid,csc=csc,
-                                               media_config=MEDIA_CFG,display=100)
-            new_results[kw]=_res
-            new_clusters[kw]=(nf.process_and_score(_res["articles"],MEDIA_CFG,t4_sort)
-                              if _res["status"]=="success" and _res["articles"] else [])
-        prog.progress(1.0,"완료")
-        now_kst=datetime.now(timezone.utc)+timedelta(hours=9)
-        st.session_state["t4_results"]=new_results
-        st.session_state["t4_clusters"]=new_clusters
-        st.session_state["t4_last_fetch"]=now_kst
+    if t4_fetch and _t4_cur_kws:
+        days_map  = {"최근 7일": 7, "최근 14일": 14, "최근 30일": 30}
+        n_days    = days_map.get(t4_days, 7)
+        date_to   = datetime.now().strftime("%Y-%m-%d")
+        date_from = (datetime.now() - timedelta(days=n_days)).strftime("%Y-%m-%d")
+        sort_api  = "date" if t4_sort == "최신순" else "sim"
+        scope_key = "whitelist" if "주요" in t4_scope else "all"
+        type_f    = "" if t4_type == "전체" else t4_type
+        cid, csc  = _get_naver_creds()
+        new_results = {}; new_clusters = {}
+        prog = st.progress(0, "기사 수집 중…")
+        for i, kw in enumerate(_t4_cur_kws):
+            prog.progress(i / max(len(_t4_cur_kws), 1),
+                          f"'{kw}' 기사 수집 중 ({i+1}/{len(_t4_cur_kws)})")
+            _res = nf.fetch_articles_for_keyword(keyword=kw, date_from=date_from, date_to=date_to,
+                                                 sort_api=sort_api, media_scope=scope_key,
+                                                 article_type_filter=type_f, cid=cid, csc=csc,
+                                                 media_config=MEDIA_CFG, display=100)
+            new_results[kw] = _res
+            new_clusters[kw] = (nf.process_and_score(_res["articles"], MEDIA_CFG, t4_sort)
+                                if _res["status"] == "success" and _res["articles"] else [])
+        prog.progress(1.0, "완료")
+        now_kst = datetime.now(timezone.utc) + timedelta(hours=9)
+        st.session_state["t4_results"]    = new_results
+        st.session_state["t4_clusters"]   = new_clusters
+        st.session_state["t4_last_fetch"] = now_kst
+        # 최근 검색 히스토리 업데이트 (최대 10개)
+        for _hkw in _t4_cur_kws:
+            if _hkw in st.session_state["t4_mon_history"]:
+                st.session_state["t4_mon_history"].remove(_hkw)
+            st.session_state["t4_mon_history"].insert(0, _hkw)
+        st.session_state["t4_mon_history"] = st.session_state["t4_mon_history"][:10]
         st.rerun()
 
     t4_res=st.session_state.get("t4_results",{})
