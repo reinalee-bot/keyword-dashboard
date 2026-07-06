@@ -488,6 +488,16 @@ def load_trends() -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"])
     return df
 
+def _persist_trends_to_gh(keyword: str):
+    """collect_single_keyword 직후 호출 — Streamlit 리디플로이 전에 trends.csv를 GitHub에 영구 저장.
+    tracked_keywords 커밋이 리디플로이를 트리거하므로 이 함수가 없으면 로컬 수집 데이터가 소실됨."""
+    if not gh.is_configured() or not os.path.exists(TRENDS_CSV):
+        return
+    try:
+        gh.write_csv(pd.read_csv(TRENDS_CSV), "data/trends.csv", f"트렌드 수집: {keyword}")
+    except Exception:
+        pass
+
 def to_weekly(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     d["주차"] = d["date"].dt.to_period("W").apply(lambda p: p.start_time)
@@ -889,6 +899,7 @@ with tab2:
                 if add_tracked_keyword(kw_t):
                     with st.spinner(f"'{kw_t}' 트렌드 데이터 수집 중…"):
                         collect_single_keyword(kw_t)
+                        _persist_trends_to_gh(kw_t)
                     load_trends.clear(); _inv_tracked()
             st.success(f"✅ '{kw_t}' 등록 완료!")
             # 선택 필드 초기화
@@ -950,7 +961,8 @@ with tab2:
                                 if is_t: st.markdown("<span style='color:#059669;font-size:12px;font-weight:600'>📌 추적 중</span>",unsafe_allow_html=True)
                                 elif st.button("📌 추적",key=f"t2_tr_{w}",use_container_width=True,type="secondary"):
                                     add_tracked_keyword(w)
-                                    with st.spinner("수집 중…"): collect_single_keyword(w); load_trends.clear()
+                                    with st.spinner("수집 중…"):
+                                        collect_single_keyword(w); _persist_trends_to_gh(w); load_trends.clear()
                                     st.rerun()
                             with bb:
                                 if is_d: st.markdown("<span style='color:#059669;font-size:12px;font-weight:600'>✅ 도출됨</span>",unsafe_allow_html=True)
@@ -976,7 +988,8 @@ with tab2:
                             if not is_t:
                                 if st.button("📌 추적",key=f"t2_rtr_{w}",use_container_width=True,type="secondary"):
                                     add_tracked_keyword(w)
-                                    with st.spinner("수집 중…"): collect_single_keyword(w); load_trends.clear()
+                                    with st.spinner("수집 중…"):
+                                        collect_single_keyword(w); _persist_trends_to_gh(w); load_trends.clear()
                                     st.rerun()
                             else: st.caption("추적 중")
                         with bb:
@@ -1065,7 +1078,9 @@ with tab3:
             elif not add_tracked_keyword(kt): st.info(f"'{kt}'는 이미 추적 중입니다.")
             else:
                 with st.spinner(f"'{kt}' 수집 중…"):
-                    nok,gok = collect_single_keyword(kt); load_trends.clear()
+                    nok,gok = collect_single_keyword(kt)
+                    _persist_trends_to_gh(kt)
+                    load_trends.clear()
                 _inv_tracked()
                 st.success(f"추가 완료 — 네이버 {'✅' if nok else '⚠️'} / 구글 {'✅' if gok else '⚠️'}")
                 st.rerun()
