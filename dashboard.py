@@ -42,7 +42,7 @@ CURRENT_MONTH = datetime.today().strftime("%Y-%m")
 USAGES = ["PR 기사","온드미디어","공통"]
 
 # ── 페이지 설정 ───────────────────────────────────────────
-st.set_page_config(page_title="키워드 인텔리전스 | SCK·STK",
+st.set_page_config(page_title="뉴스 & 트렌드 모니터링 | SCK·STK",
                    page_icon="📊", layout="wide")
 
 # ── CSS ──────────────────────────────────────────────────────
@@ -806,8 +806,8 @@ st.markdown(f"""
   </div>
 </div>
 <div class="kd-hero">
-  <div class="kd-hero-title">키워드 트렌드 인텔리전스</div>
-  <div class="kd-hero-sub">트렌드 키워드 발굴 · 기사 모니터링 · PR 반영 현황 통합 관리</div>
+  <div class="kd-hero-title">뉴스 &amp; 트렌드 모니터링</div>
+  <div class="kd-hero-sub">주요 뉴스와 키워드 흐름을 모니터링하고, PR 활용 가능한 이슈와 소재를 발굴합니다.</div>
 </div>""", unsafe_allow_html=True)
 
 tab1,tab2,tab3,tab4,tab5 = st.tabs([
@@ -1755,7 +1755,7 @@ st.markdown(f"""
 <div style="margin-top:3rem;padding-top:1.5rem;border-top:1px solid #DCE3EA;
 display:flex;justify-content:space-between;align-items:center;
 font-size:11px;color:#94A3B8;flex-wrap:wrap;gap:4px">
-  <span>키워드 인텔리전스 · SCK/STK Corp · {CURRENT_MONTH}</span>
+  <span>뉴스 &amp; 트렌드 모니터링 · SCK/STK Corp · {CURRENT_MONTH}</span>
   <span style='font-weight:700;color:#2F6BFF'>BUILD {BUILD_VERSION}</span>
   <span>트렌드 {_tcnt:,}건 · 매체 {_mcnt}개 · 네이버 데이터랩 · 구글 트렌드</span>
 </div>""",unsafe_allow_html=True)
