@@ -812,9 +812,9 @@ st.markdown(f"""
 
 tab1,tab2,tab3,tab4,tab5 = st.tabs([
     "📊 전체 현황",
-    "🔍 급상승 키워드 발굴",
-    "📈 트렌드 키워드 탐색",
-    "📰 PR 소재 발굴",
+    "🔍 급상승 키워드 및 등록",
+    "📈 트렌드 탐색",
+    "📰 뉴스 모니터링",
     "📋 활용처 관리",
 ])
 
@@ -873,9 +873,9 @@ with tab1:
                         f"<span style='font-size:.88rem;font-weight:400;color:#667085'>건</span></div>",
                         unsafe_allow_html=True)
             if last_f: st.caption(f"마지막 수집 {last_f}")
-            st.caption("'📰 PR 소재 발굴' 탭에서 전체 내용을 확인하세요.")
+            st.caption("'📰 뉴스 모니터링' 탭에서 전체 내용을 확인하세요.")
         else:
-            st.caption("'📰 PR 소재 발굴' 탭에서 기사를 수집하면 여기에 요약이 표시됩니다.")
+            st.caption("'📰 뉴스 모니터링' 탭에서 기사를 수집하면 여기에 요약이 표시됩니다.")
 
     st.markdown("<div style='margin-top:1rem'></div>",unsafe_allow_html=True)
 
@@ -1662,7 +1662,7 @@ with tab5:
     flt=st.session_state["t5_flt"]
 
     if df_cur5.empty:
-        st.info("이번 달 등록된 도출 키워드가 없습니다. '🔍 급상승 키워드 발굴' 탭에서 추가해 주세요.")
+        st.info("이번 달 등록된 도출 키워드가 없습니다. '🔍 급상승 키워드 및 등록' 탭에서 추가해 주세요.")
     else:
         if flt=="PR 기사":      df5=df_cur5[df_cur5["활용처"].isin(["PR 기사","공통"])].copy()
         elif flt=="온드미디어": df5=df_cur5[df_cur5["활용처"].isin(["온드미디어","공통"])].copy()
