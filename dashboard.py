@@ -811,18 +811,21 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 tab1,tab2,tab3,tab4,tab5 = st.tabs([
-    "📊 전체 현황",
-    "🔍 급상승 키워드 및 등록",
-    "📈 트렌드 탐색",
-    "📰 뉴스 모니터링",
-    "📋 활용처 관리",
+    "📊 모니터링 현황",
+    "🔍 키워드 발굴·등록",
+    "📈 키워드 추이 분석",
+    "📰 관련 뉴스 수집",
+    "📋 PR 활용 관리",
 ])
 
 
 # ════════════════════════════════════════════════════════
-# TAB 1 · 전체 현황
+# TAB 1 · 모니터링 현황
 # ════════════════════════════════════════════════════════
 with tab1:
+    st.markdown("""<div class="sh-main"><div class="t">모니터링 현황</div>
+<div class="s">이번 달 등록 키워드, 반영 현황, 기사 수집 상태를 요약해 확인합니다.</div></div>""",
+                unsafe_allow_html=True)
     st.markdown("""<div class="sh-sub"><div class="t">이번 달 KPI 현황</div>
 <div class="s">도출 목표 5건 · 반영률 목표 70%</div></div>""", unsafe_allow_html=True)
 
@@ -873,9 +876,9 @@ with tab1:
                         f"<span style='font-size:.88rem;font-weight:400;color:#667085'>건</span></div>",
                         unsafe_allow_html=True)
             if last_f: st.caption(f"마지막 수집 {last_f}")
-            st.caption("'📰 뉴스 모니터링' 탭에서 전체 내용을 확인하세요.")
+            st.caption("'📰 관련 뉴스 수집' 탭에서 전체 내용을 확인하세요.")
         else:
-            st.caption("'📰 뉴스 모니터링' 탭에서 기사를 수집하면 여기에 요약이 표시됩니다.")
+            st.caption("'📰 관련 뉴스 수집' 탭에서 기사를 수집하면 여기에 요약이 표시됩니다.")
 
     st.markdown("<div style='margin-top:1rem'></div>",unsafe_allow_html=True)
 
@@ -895,13 +898,36 @@ with tab1:
             st.markdown("<div style='margin-top:1rem'></div>",unsafe_allow_html=True)
             _render_manual_form(dfm,pfx="t1_")
 
+    st.markdown("<div style='margin-top:2rem'></div>", unsafe_allow_html=True)
+    st.markdown("""<div class="sh-sub"><div class="t">다음 단계</div>
+<div class="s">아래 탭에서 작업을 이어가세요.</div></div>""", unsafe_allow_html=True)
+    _na, _nb, _nc = st.columns(3, gap="medium")
+    with _na:
+        st.markdown("""<div style='background:#F0F4FF;border:1px solid #C7D7FD;border-radius:10px;
+padding:16px 18px;text-align:center'>
+<div style='font-size:1.3rem'>🔍</div>
+<div style='font-weight:700;color:#101828;font-size:14px;margin:6px 0 4px'>키워드 등록하기</div>
+<div style='font-size:12px;color:#667085'>키워드 발굴·등록 탭</div></div>""", unsafe_allow_html=True)
+    with _nb:
+        st.markdown("""<div style='background:#F0FDF4;border:1px solid #A7F3D0;border-radius:10px;
+padding:16px 18px;text-align:center'>
+<div style='font-size:1.3rem'>📰</div>
+<div style='font-weight:700;color:#101828;font-size:14px;margin:6px 0 4px'>관련 뉴스 수집하기</div>
+<div style='font-size:12px;color:#667085'>관련 뉴스 수집 탭</div></div>""", unsafe_allow_html=True)
+    with _nc:
+        st.markdown("""<div style='background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;
+padding:16px 18px;text-align:center'>
+<div style='font-size:1.3rem'>📋</div>
+<div style='font-weight:700;color:#101828;font-size:14px;margin:6px 0 4px'>PR 활용 관리하기</div>
+<div style='font-size:12px;color:#667085'>PR 활용 관리 탭</div></div>""", unsafe_allow_html=True)
+
 
 # ════════════════════════════════════════════════════════
-# TAB 2 · 급상승 키워드 발굴
+# TAB 2 · 키워드 발굴·등록
 # ════════════════════════════════════════════════════════
 with tab2:
-    st.markdown("""<div class="sh-main"><div class="t">도출 키워드 빠른 등록</div>
-<div class="s">이번 달 발굴한 키워드를 즉시 등록합니다.</div></div>""",unsafe_allow_html=True)
+    st.markdown("""<div class="sh-main"><div class="t">키워드 발굴·등록</div>
+<div class="s">급상승 키워드를 확인하거나 PR 모니터링에 필요한 키워드를 직접 등록합니다.</div></div>""",unsafe_allow_html=True)
 
     # 메인 등록 폼 (expander 없음 — form 내부 expander가 _arr 원인 중 하나)
     with st.form("t2_qreg",clear_on_submit=True):
@@ -954,7 +980,7 @@ with tab2:
     # ── 뉴스 키워드 발굴 ─────────────────────────────────
     last_upd = get_last_collection_time()
     st.markdown(f"""<div class="sh-main">
-<div class="t">급상승 키워드 발굴
+<div class="t">급상승 키워드 탐색
   <span style='font-weight:400;font-size:.82rem;color:#667085'>&nbsp;· 마지막 트렌드 업데이트 {last_upd}</span>
 </div>
 <div class="s">구글 뉴스 RSS 기사 빈도 기반 · 버튼 클릭 시 분석</div></div>""",unsafe_allow_html=True)
@@ -1042,14 +1068,14 @@ with tab2:
 
 
 # ════════════════════════════════════════════════════════
-# TAB 3 · 트렌드 키워드 탐색
+# TAB 3 · 키워드 추이 분석
 # ════════════════════════════════════════════════════════
 with tab3:
     tracked_kws = load_tracked_keywords()
 
     st.markdown(f"""<div class="sh-main">
-<div class="t">추적 키워드 관리 · {len(tracked_kws)}개</div>
-<div class="s">키워드 클릭 → 그래프 포함/제외 &nbsp;·&nbsp; × 클릭 → 추적 삭제</div></div>""",
+<div class="t">키워드 추이 분석 · {len(tracked_kws)}개 추적 중</div>
+<div class="s">등록 키워드의 검색 관심도와 변동 추이를 비교해 PR 활용 가능성을 검토합니다.</div></div>""",
                 unsafe_allow_html=True)
 
     if "hidden_kws"   not in st.session_state: st.session_state["hidden_kws"]   = set()
@@ -1299,7 +1325,7 @@ with tab3:
 
 
 # ════════════════════════════════════════════════════════
-# TAB 4 · PR 소재 발굴 · 뉴스 모니터링
+# TAB 4 · 관련 뉴스 수집
 # ════════════════════════════════════════════════════════
 with tab4:
     if "t4_results"     not in st.session_state: st.session_state["t4_results"]     = {}
@@ -1331,8 +1357,8 @@ with tab4:
             return ("시장 동향 브리핑 참고 기사", False)
         return ("온드미디어 콘텐츠 소재로 검토 가능", False)
 
-    st.markdown("""<div class="sh-main"><div class="t">PR 소재 발굴 · 뉴스 모니터링</div>
-<div class="s">트렌드 키워드 또는 수동 입력 키워드를 기준으로 관련 뉴스를 수집하고, PR 활용 가능성이 높은 기사를 선별합니다.</div></div>""",
+    st.markdown("""<div class="sh-main"><div class="t">관련 뉴스 수집</div>
+<div class="s">등록 또는 입력한 키워드를 기준으로 관련 기사를 수집하고, 주요 기사 후보를 선별합니다.</div></div>""",
                 unsafe_allow_html=True)
 
     # ── 수집 플로우 표시 ───────────────────────────────────────────
@@ -1474,7 +1500,8 @@ with tab4:
 
     if not t4_clusters:
         st.markdown("""<div class='notice-box'>
-조회 조건을 설정하고 '기사 불러오기'를 클릭하면 기사를 불러옵니다.
+키워드를 입력하거나 트렌드 키워드를 불러온 뒤 기사보기를 실행해 주세요.
+수집된 기사는 중복 제거 후 PR 활용 가능성이 높은 기사 중심으로 선별됩니다.
 </div>""", unsafe_allow_html=True)
     else:
         # ── 인사이트 자동 요약 ─────────────────────────────────────
@@ -1640,8 +1667,8 @@ with tab5:
     df_cur5  = load_derived(CURRENT_MONTH)
     df_con5  = load_content(CURRENT_MONTH)
 
-    st.markdown("""<div class="sh-main"><div class="t">활용처 · 반영 현황</div>
-<div class="s">활용처 변경 시 자동 저장 · 상세 편집 버튼으로 콘텐츠 등록·수정</div></div>""",
+    st.markdown("""<div class="sh-main"><div class="t">PR 활용 관리</div>
+<div class="s">뉴스 모니터링에서 선별한 기사와 키워드의 PR 활용처 및 반영 상태를 관리합니다.</div></div>""",
                 unsafe_allow_html=True)
 
     FILTER_OPTS=["전체","PR 기사","온드미디어","미지정","미반영"]
@@ -1662,7 +1689,7 @@ with tab5:
     flt=st.session_state["t5_flt"]
 
     if df_cur5.empty:
-        st.info("이번 달 등록된 도출 키워드가 없습니다. '🔍 급상승 키워드 및 등록' 탭에서 추가해 주세요.")
+        st.info("이번 달 등록된 도출 키워드가 없습니다. '🔍 키워드 발굴·등록' 탭에서 추가해 주세요.")
     else:
         if flt=="PR 기사":      df5=df_cur5[df_cur5["활용처"].isin(["PR 기사","공통"])].copy()
         elif flt=="온드미디어": df5=df_cur5[df_cur5["활용처"].isin(["온드미디어","공통"])].copy()
