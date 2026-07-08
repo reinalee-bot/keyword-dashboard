@@ -1,4 +1,4 @@
-﻿keyword,date,ratio,source,collected_at
+keyword,date,ratio,source,collected_at
 AI보안,2026-03-23,17.0,google,2026-06-23 10:59:40
 기업보안,2026-03-23,0.0,google,2026-06-23 10:59:40
 사이버보안,2026-03-23,0.0,google,2026-06-23 10:59:40
@@ -2248,3 +2248,23 @@ AI보안,2026-07-06,4.8414,naver,2026-07-07 11:22:25
 정보보안,2026-07-06,6.84474,naver,2026-07-07 11:22:25
 사이버보안,2026-07-06,7.67946,naver,2026-07-07 11:22:25
 생성형AI,2026-07-06,70.45075,naver,2026-07-07 11:22:25
+AITransformation,2026-06-08,50.0,naver,2026-07-08 04:31:42
+AITransformation,2026-06-09,68.75,naver,2026-07-08 04:31:42
+AITransformation,2026-06-10,87.5,naver,2026-07-08 04:31:42
+AITransformation,2026-06-11,43.75,naver,2026-07-08 04:31:42
+AITransformation,2026-06-17,68.75,naver,2026-07-08 04:31:42
+AITransformation,2026-06-18,68.75,naver,2026-07-08 04:31:42
+AITransformation,2026-06-19,43.75,naver,2026-07-08 04:31:42
+AITransformation,2026-06-22,50.0,naver,2026-07-08 04:31:42
+AITransformation,2026-06-23,62.5,naver,2026-07-08 04:31:42
+AITransformation,2026-06-24,31.25,naver,2026-07-08 04:31:42
+AITransformation,2026-06-25,43.75,naver,2026-07-08 04:31:42
+AITransformation,2026-06-26,62.5,naver,2026-07-08 04:31:42
+AITransformation,2026-06-29,87.5,naver,2026-07-08 04:31:42
+AITransformation,2026-06-30,100.0,naver,2026-07-08 04:31:42
+AITransformation,2026-07-01,31.25,naver,2026-07-08 04:31:42
+AITransformation,2026-07-02,75.0,naver,2026-07-08 04:31:42
+AITransformation,2026-07-03,81.25,naver,2026-07-08 04:31:42
+AITransformation,2026-07-05,50.0,naver,2026-07-08 04:31:42
+AITransformation,2026-07-06,75.0,naver,2026-07-08 04:31:42
+AITransformation,2026-07-07,56.25,naver,2026-07-08 04:31:42
