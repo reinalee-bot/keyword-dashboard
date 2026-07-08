@@ -1283,8 +1283,17 @@ with tab3:
 <div class='tc-row'>마지막 데이터 &nbsp;<strong>{last_str}</strong></div>
 <div class='tc-row'>검색량 추세 &nbsp; {_trend_badge(_sn['trend_label'],_sn['trend_tip'])}</div>""",unsafe_allow_html=True)
                     else:
-                        # 단일 소스
-                        _src_lbl = "네이버" if _sn else "구글"
+                        # 단일 소스 — 어느 소스가 있고 없는지 명확히 표시
+                        if _sn:
+                            _src_color = "#2F6BFF"
+                            _src_lbl   = "네이버 데이터랩"
+                            _miss_lbl  = "구글 트렌드"
+                            _miss_reason = "검색량 부족"
+                        else:
+                            _src_color = "#10B981"
+                            _src_lbl   = "구글 트렌드"
+                            _miss_lbl  = "네이버 데이터랩"
+                            _miss_reason = "데이터 없음"
                         wcs,wcc = _chg_fmt(_use['wk_chg'])
                         acs,acc = _chg_fmt(_use['avg_chg'])
                         try:    peak_str=pd.Timestamp(_ref_df.loc[_ref_df["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
@@ -1292,8 +1301,11 @@ with tab3:
                         try:    last_str=pd.Timestamp(_ref_df["date"].max()).strftime("%Y.%m.%d")
                         except: last_str="—"
                         st.markdown(f"""
-<div class='tc-row'>현재 관심도 &nbsp;<strong>{_use['current']:.0f}</strong>
-  <span style='font-size:11px;color:#94A3B8'> ({_src_lbl})</span></div>
+<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>
+  <span style='font-size:11px;font-weight:700;color:{_src_color}'>{_src_lbl}</span>
+  <span style='font-size:10px;color:#94A3B8;background:#F1F5F9;border-radius:10px;padding:1px 7px'>{_miss_lbl}: {_miss_reason}</span>
+</div>
+<div class='tc-row'>관심도 &nbsp;<strong>{_use['current']:.0f}</strong></div>
 <div class='tc-row'>전주 대비 &nbsp;<strong style='color:{wcc}'>{wcs}</strong></div>
 <div class='tc-row'>최근 4주 평균 &nbsp;<strong>{_use['avg4']:.1f}</strong></div>
 <div class='tc-row'>이전 4주 대비 &nbsp;<strong style='color:{acc}'>{acs}</strong></div>
