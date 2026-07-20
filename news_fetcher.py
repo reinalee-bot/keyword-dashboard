@@ -455,7 +455,7 @@ def fetch_articles_for_keyword(
                 continue
 
         # SCK 관련성 판정
-        art.update(_rs.score_relevance(art["title"], art["description"])
+        art.update(_rs.score_relevance(art["title"], art["description"], query_keyword=keyword)
                    if _HAS_RELEVANCE else _REL_FALLBACK)
 
         articles.append(art)
