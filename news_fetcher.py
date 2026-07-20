@@ -19,6 +19,18 @@ from urllib.parse import urlparse
 import pandas as pd
 import requests
 
+try:
+    import relevance_scorer as _rs
+    _HAS_RELEVANCE = True
+except Exception:
+    _HAS_RELEVANCE = False
+
+_REL_FALLBACK = {
+    "_relevance_score": 50, "_relevance_level": "보통",
+    "_relevance_type": "일반", "_relevance_reasons": [],
+    "_low_relevance_reason": "",
+}
+
 # ── 경로 ─────────────────────────────────────────────────
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR     = os.path.join(BASE_DIR, "config")
@@ -441,6 +453,10 @@ def fetch_articles_for_keyword(
         if article_type_filter and article_type_filter not in ("전체", ""):
             if art["article_type"] != article_type_filter:
                 continue
+
+        # SCK 관련성 판정
+        art.update(_rs.score_relevance(art["title"], art["description"])
+                   if _HAS_RELEVANCE else _REL_FALLBACK)
 
         articles.append(art)
 

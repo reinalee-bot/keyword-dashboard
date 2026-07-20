@@ -189,6 +189,12 @@ p, h1, h2, h3, h4, h5, h6, li, td, th, label, caption,
 .art-meta    { font-size:12px;color:#667085;line-height:1.8; }
 .art-desc    { font-size:13px;color:#475569;line-height:1.65;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden; }
 .art-status-err { font-size:12px;color:#DC2626;font-weight:600; }
+/* ── SCK 관련성 배지 ────────────────────────────────── */
+.rel-high { display:inline-block;background:#D1FAE5;color:#065F46;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:4px; }
+.rel-mid  { display:inline-block;background:#FEF3C7;color:#92400E;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:4px; }
+.rel-low  { display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:4px; }
+.rel-type { display:inline-block;background:#EFF6FF;color:#1E40AF;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600; }
+.rel-why  { font-size:11px;color:#94A3B8;line-height:1.6;margin:2px 0 5px; }
 .art-suggest    { font-size:11.5px;color:#2F6BFF;background:#EEF4FF;border-radius:4px;padding:3px 8px;display:inline-block;margin:4px 0; }
 .art-suggest.risk { color:#B45309;background:#FFFBEB; }
 .art-util-reg   { font-size:11px;color:#059669;font-weight:600; }
@@ -1556,8 +1562,14 @@ with tab4:
                     st.caption("해당 키워드·조건에 맞는 기사가 없습니다.")
                 continue
 
-            for ci in range(0, len(clusters), 2):
-                batch_cl = clusters[ci:ci+2]
+            # 관련성 높음/보통 기사와 낮음 기사를 분리
+            main_cls = [cl for cl in clusters
+                        if cl["rep"].get("_relevance_level", "보통") != "낮음"]
+            low_cls  = [cl for cl in clusters
+                        if cl["rep"].get("_relevance_level", "보통") == "낮음"]
+
+            for ci in range(0, len(main_cls), 2):
+                batch_cl = main_cls[ci:ci+2]
                 card_c   = st.columns(len(batch_cl), gap="medium")
                 for col, cl in zip(card_c, batch_cl):
                     rep    = cl["rep"]
@@ -1583,6 +1595,23 @@ with tab4:
                                 f"<span class='art-score' title='내부 참고 지표 — 키워드 관련성, 관련 보도 수, 매체 우선등급, 최신성을 종합'>"
                                 f"화제성 추정 {sc}점</span>")
                             st.markdown(" ".join(badges), unsafe_allow_html=True)
+
+                            # SCK 관련성 배지
+                            _rl  = rep.get("_relevance_level", "")
+                            _rt  = rep.get("_relevance_type", "")
+                            _rws = rep.get("_relevance_reasons", [])
+                            _lrr = rep.get("_low_relevance_reason", "")
+                            if _rl:
+                                _rl_cls = {"높음":"rel-high","보통":"rel-mid","낮음":"rel-low"}.get(_rl,"rel-mid")
+                                _rel_html = (
+                                    f"<span class='{_rl_cls}'>SCK 관련성: {_rl}</span>"
+                                    + (f"<span class='rel-type'>{_rt}</span>" if _rt and _rt != "일반" else "")
+                                )
+                                st.markdown(_rel_html, unsafe_allow_html=True)
+                                if _rws:
+                                    st.markdown(
+                                        f"<div class='rel-why'>근거: {' · '.join(_rws[:3])}</div>",
+                                        unsafe_allow_html=True)
 
                             # 제목
                             if url: st.markdown(f"**[{ttl}]({url})**")
@@ -1668,6 +1697,28 @@ with tab4:
                                                  type="secondary", use_container_width=True):
                                         st.session_state[_reg_open_k] = False
                                         st.rerun()
+
+            # 관련성 낮은 기사 접이식 목록
+            if low_cls:
+                with st.expander(f"관련성 낮은 기사 {len(low_cls)}건 (펼쳐보기)"):
+                    st.caption("SCK 사업 맥락과 직접 연결되지 않아 주요 목록에서 제외된 기사입니다.")
+                    for _lcl in low_cls:
+                        _lr  = _lcl["rep"]
+                        _ltl = _lr.get("title", "")
+                        _lu  = _lr.get("url", "")
+                        _lmn = _lr.get("media_name", "")
+                        _ldt = _lr.get("pub_date", "")
+                        _lrt = _lr.get("_relevance_type", "")
+                        _lrr = _lr.get("_low_relevance_reason", "")
+                        _lsz = _lcl["size"]
+                        _meta = " · ".join(p for p in [_lmn, _ldt] if p)
+                        if _lsz > 1: _meta += f" · 관련 보도 {_lsz}건"
+                        _reason_txt = f"  ({_lrr})" if _lrr else ""
+                        st.markdown(
+                            (f"• **[{_ltl}]({_lu})**  " if _lu else f"• **{_ltl}**  ") +
+                            f"\n  <span style='font-size:11px;color:#94A3B8'>{_meta}</span>"
+                            f"<span style='font-size:11px;color:#D97706'>{_reason_txt}</span>",
+                            unsafe_allow_html=True)
 
             st.markdown("<hr>", unsafe_allow_html=True)
 

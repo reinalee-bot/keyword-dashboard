@@ -8,3 +8,4 @@ python-dotenv==1.2.2
 pytrends==4.9.2
 urllib3==1.26.20
 numpy>=1.24.0
+pyyaml>=6.0
