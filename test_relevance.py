@@ -166,6 +166,73 @@ cases = [
         "expect_level": "낮음",
         "expect_max_score": 34,
     },
+
+    # ── 신규 T17~T23 ──────────────────────────────────────────────────────
+    {
+        "id": 17,
+        "name": "AX 제목 독립 단어 + 제조기업 문맥 → 보통 이상",
+        "title": "KTL, 산업 AI 국제인증으로 제조기업 AX 경쟁력 강화 지원",
+        "desc": "한국산업기술시험원(KTL)이 산업 AI 국제인증 체계를 통해 제조기업의 AX(AI 전환) 경쟁력 강화를 지원한다. 도입 사례 컨설팅과 라이선스 비용 가이드도 제공한다.",
+        "query": "AX",
+        "expect_level_not": "낮음",
+        "expect_min_score": 35,
+    },
+    {
+        "id": 18,
+        "name": "TAX/MAX만 존재 → AX로 인식 안 함",
+        "title": "소득세(Income TAX)·법인세 제도 개편 논의",
+        "desc": "국세청이 소득세와 법인세 제도를 개편한다. 세수 확보와 TAX 부담 형평성이 핵심이다.",
+        "query": "AX",
+        "expect_level": "낮음",
+        "expect_max_score": 20,
+    },
+    {
+        "id": 19,
+        "name": "AX desc 단순 언급 → 낮음",
+        "title": "삼성전자 폴더블폰 신제품 발표",
+        "desc": "삼성전자가 AI와 AX 기술을 적용한 폴더블폰을 출시했다.",
+        "query": "AX",
+        "expect_level": "낮음",
+        "expect_max_score": 34,
+    },
+    {
+        "id": 20,
+        "name": "RSA+Microsoft Entra 통합 (Microsoft query) → 최대 30점",
+        "title": "RSA, AI 도입 기업 위한 패스워드리스 인증 솔루션 발표",
+        "desc": "RSA ID Plus와 Microsoft Entra를 통합하면 IT 사용자를 위한 다중 인증(MFA)을 지원할 수 있다. 보안 정책 준수와 컴플라이언스 요구사항을 충족한다.",
+        "query": "Microsoft",
+        "expect_level": "낮음",
+        "expect_max_score": 30,
+    },
+    {
+        "id": 21,
+        "name": "Microsoft Entra 정책 변경 (Microsoft 주체) → 높음",
+        "title": "마이크로소프트, Entra 보안 정책 변경 및 파트너 가이드라인 발표",
+        "desc": "Microsoft가 Entra 보안 정책을 강화하고 파트너 라이선스 가이드라인을 개편했다. 기업 컴플라이언스 준수와 IT 예산 계획에 영향을 준다.",
+        "query": "Microsoft",
+        "expect_level": "높음",
+        "expect_min_score": 65,
+    },
+    {
+        "id": 22,
+        "name": "순수 영어 기사 → 외국어 플래그 + 낮음",
+        "title": "Microsoft announces new AI features for enterprise customers",
+        "desc": "Microsoft has unveiled new AI-powered features targeting enterprise productivity, including advanced Copilot integrations.",
+        "query": "Microsoft",
+        "expect_level": "낮음",
+        "expect_max_score": 10,
+        "expect_foreign": True,
+    },
+    {
+        "id": 23,
+        "name": "영문 제품명 포함 한국어 기사 → 외국어 제외 안 함",
+        "title": "마이크로소프트 Teams 활용한 기업 업무 협업 솔루션 M365 도입 사례 발표",
+        "desc": "마이크로소프트가 기업 고객을 대상으로 Teams와 M365 라이선스 도입 사례를 발표했다. 국내 총판 파트너십 확대도 함께 공개했다.",
+        "query": "Microsoft",
+        "expect_foreign": False,
+        "expect_level": "높음",
+        "expect_min_score": 65,
+    },
 ]
 
 passed = 0
@@ -198,6 +265,11 @@ for c in cases:
     if "expect_min_score" in c and score < c["expect_min_score"]:
         ok = False
         fail_msg += f" 점수 {score} < 하한 {c['expect_min_score']}"
+    if "expect_foreign" in c:
+        actual_foreign = result.get("_foreign_language", False)
+        if actual_foreign != c["expect_foreign"]:
+            ok = False
+            fail_msg += f" _foreign_language={actual_foreign} (기대: {c['expect_foreign']})"
 
     status = PASS if ok else FAIL
     if ok:

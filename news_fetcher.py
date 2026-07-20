@@ -28,7 +28,7 @@ except Exception:
 _REL_FALLBACK = {
     "_relevance_score": 50, "_relevance_level": "보통",
     "_relevance_type": "일반", "_relevance_reasons": [],
-    "_low_relevance_reason": "",
+    "_low_relevance_reason": "", "_foreign_language": False,
 }
 
 # ── 경로 ─────────────────────────────────────────────────
@@ -343,6 +343,7 @@ def fetch_articles_for_keyword(
         "filtered_count": 0,
         "status": "success",
         "error": None,
+        "foreign_count": 0,
     }
 
     if not cid or not csc:
@@ -457,6 +458,11 @@ def fetch_articles_for_keyword(
         # SCK 관련성 판정
         art.update(_rs.score_relevance(art["title"], art["description"], query_keyword=keyword)
                    if _HAS_RELEVANCE else _REL_FALLBACK)
+
+        # 외국어 기사 제외 — 높음/보통/낮음 어디에도 포함하지 않음
+        if art.get("_foreign_language"):
+            out["foreign_count"] += 1
+            continue
 
         articles.append(art)
 

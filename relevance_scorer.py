@@ -93,6 +93,29 @@ def _get_query_type(keyword: str, cfg: dict) -> str:
     return "unknown"
 
 
+def _keyword_in_title(keyword: str, tl: str) -> bool:
+    """query_keyword가 제목에 독립 단어로 있는지 확인 (TAX·MAX 등 부분 포함 방지)."""
+    if not keyword:
+        return False
+    kl = re.escape(keyword.lower())
+    return bool(re.search(r'(?<![a-zA-Z가-힣])' + kl + r'(?![a-zA-Z가-힣])', tl))
+
+
+def _cosentence_check(tl: str, dl: str, topic_h: list, impact_h: list) -> bool:
+    """
+    impact가 제목에 있거나, 설명에서 topic과 같은 문장에 있는지 확인.
+    broad_topic 쿼리에서 '동일 문장 문맥' 조건 검증용.
+    """
+    for imp in impact_h:
+        if imp in tl:
+            return True
+    for sent in re.split(r"[.!?\n。…]", dl):
+        sl = sent.strip()
+        if any(t in sl for t in topic_h) and any(imp in sl for imp in impact_h):
+            return True
+    return False
+
+
 # ─────────────────────────────────────────────────────────────
 def score_relevance(title: str, description: str, query_keyword: str = None) -> dict:
     """
@@ -231,22 +254,44 @@ def score_relevance(title: str, description: str, query_keyword: str = None) -> 
         n_i = len(valid_impacts_t)
 
         if q_type == "broad_topic":
-            # broad_topic 쿼리: 기업 영향 맥락 명시적 결합 필수
-            if n_i >= 2:
+            # broad_topic 쿼리:
+            #   (1) topic이 제목에 있거나 query_keyword 자체가 제목에 독립 단어로 있어야 핵심 주제로 인정
+            #   (2) impact가 제목 또는 topic/keyword와 동일 문장에 있어야 보통 이상
+            kw_in_tl    = _keyword_in_title(query_keyword, tl)
+            topic_in_tl = any(t in tl for t in topic_h) or kw_in_tl
+
+            # cosentence 판정에도 query_keyword를 topic 후보로 포함
+            topic_for_cosent = list(topic_h)
+            if query_keyword:
+                topic_for_cosent.append(query_keyword.lower())
+            cosentence = _cosentence_check(tl, dl, topic_for_cosent, valid_impacts_t) if n_i > 0 else False
+
+            # query_keyword가 제목에 있고 산업·기업 문맥어도 제목에 있으면 35점(보통 하단)
+            broad_ctx = _lower(cfg.get("broad_context_terms", []))
+            broad_ctx_hit = kw_in_tl and any(b in tl for b in broad_ctx)
+
+            if n_i >= 2 and topic_in_tl and cosentence:
                 t_score = 55
                 reasons.append(
-                    f"사업 주제({', '.join(topic_h[:2])}) + 기업 영향 복수({', '.join(valid_impacts_t[:2])})"
+                    f"사업 주제({', '.join(topic_h[:2]) or query_keyword}) + 기업 영향 복수({', '.join(valid_impacts_t[:2])})"
                 )
-            elif n_i == 1:
+            elif n_i == 1 and topic_in_tl and cosentence:
                 t_score = 40
-                reasons.append(f"사업 주제({topic_h[0]}) + 기업 영향 맥락({valid_impacts_t[0]})")
-            elif n_t >= 3:
+                reasons.append(f"사업 주제({topic_h[0] if topic_h else query_keyword}) + 기업 영향 맥락({valid_impacts_t[0]})")
+            elif n_t >= 3 and topic_in_tl:
                 t_score = 35
                 reasons.append(f"사업 관련 주제 복수 ({', '.join(topic_h[:3])})")
-            else:
-                # broad_topic 단독: 상한 20
+            elif broad_ctx_hit:
+                # query_keyword 제목 + 산업/기업 문맥어 제목 → 보통 하단
+                t_score = 35
+                reasons.append(f"검색 주제({query_keyword}) 제목 포함 + 산업 문맥")
+            elif topic_in_tl:
                 t_score = 20
-                reasons.append(f"사업 관련 주제 언급 ({topic_h[0]})")
+                reasons.append(f"사업 관련 주제 언급 ({topic_h[0] if topic_h else query_keyword})")
+            else:
+                # topic이 본문에만 있는 경우 — 핵심 주제로 보기 어려움
+                t_score = 10
+                reasons.append(f"사업 주제 본문 언급 ({topic_h[0]})")
         else:
             # 일반 쿼리: 기존 로직
             if n_i >= 2:
@@ -304,6 +349,11 @@ def score_relevance(title: str, description: str, query_keyword: str = None) -> 
         score = max(0, score - 20)
         if not any("홍보성" in d for d in deducts):
             deducts.append(f"기업 홍보성 내용 ({promo_h[0]})")
+
+    # ── vendor 타사 기사 최종 상한 (리스크 등 모든 경로 우회 방지) ─────
+    if q_type == "vendor" and vendor_h and not vendor_is_title_subject and score > 30:
+        score = 30
+        deducts.append("vendor 타사 기사 상한 (30점) 적용")
 
     # ── 유형 결정 ────────────────────────────────────────────
     if own_h:
