@@ -1,5 +1,5 @@
 """
-SCK 관련성 판정 회귀 테스트 (16개)
+SCK 관련성 판정 회귀 테스트 (31개)
 실행: python test_relevance.py
 """
 
@@ -232,6 +232,80 @@ cases = [
         "expect_foreign": False,
         "expect_level": "높음",
         "expect_min_score": 65,
+    },
+
+    # ── 신규 T24~T31 (4b 독립 경로 검증) ─────────────────────────────────────
+    {
+        "id": 24,
+        "name": "KTL AX 실제 기사 — topic_h=[] 상황 Path A",
+        "title": "KTL, 산업 AI 국제인증 지원…제조기업 AX 경쟁력 강화",
+        "desc": "한국산업기술시험원(KTL)이 산업 AI 국제인증 체계를 구축했다.",
+        "query": "AX",
+        "expect_level_not": "낮음",
+        "expect_min_score": 35,
+    },
+    {
+        "id": 25,
+        "name": "퓨리오사AI NPU 서비스 상용화 — Path B (kw_loose)",
+        "title": "삼성SDS, 퓨리오사AI NPU 서비스 상용화",
+        "desc": "삼성SDS가 AI NPU 가속 서비스를 상용화했다. AI 에이전트 지원도 함께 제공한다.",
+        "query": "AI",
+        "expect_level_not": "낮음",
+        "expect_min_score": 35,
+    },
+    {
+        "id": 26,
+        "name": "청주시 AI 행사 개최 — 기업 문맥 없음 → 낮음",
+        "title": "청주시, AI 혁신 포럼 개최…시민 참여",
+        "desc": "청주시에서 AI 혁신 포럼이 열렸다. 시민들이 AI 기술을 체험할 수 있다.",
+        "query": "AI",
+        "expect_level": "낮음",
+        "expect_max_score": 20,
+    },
+    {
+        "id": 27,
+        "name": "지역대학 AI 교육 출시 — 출시 not in action_terms → 낮음",
+        "title": "지역대학, AI 활용 교육 프로그램 출시",
+        "desc": "지역 대학들이 AI를 활용한 교육 프로그램을 출시했다.",
+        "query": "AI",
+        "expect_level": "낮음",
+        "expect_max_score": 20,
+    },
+    {
+        "id": 28,
+        "name": "AI 소비자 스마트폰 출시 — 소비자 감점 → 낮음",
+        "title": "삼성전자, AI 기능 탑재 소비자용 스마트폰 출시",
+        "desc": "삼성전자가 소비자용 AI 스마트폰을 출시했다.",
+        "query": "AI",
+        "expect_level": "낮음",
+        "expect_max_score": 20,
+    },
+    {
+        "id": 29,
+        "name": "AI 에이전트 업무시스템 구축 → 보통 이상",
+        "title": "삼성SDS, AI 에이전트 업무 시스템 구축 지원",
+        "desc": "삼성SDS가 AI 에이전트 기반 업무 시스템을 구축하는 기업들을 지원한다.",
+        "query": "AI",
+        "expect_level_not": "낮음",
+        "expect_min_score": 35,
+    },
+    {
+        "id": 30,
+        "name": "TAX·MAX 포함 AX 쿼리 — 동의어도 매칭 안 됨 → 낮음",
+        "title": "미국 소득TAX 개편과 소비자 MAX 할인 발표",
+        "desc": "미국이 소득세를 개편했다. MAX 구독 서비스 할인도 함께 발표됐다.",
+        "query": "AX",
+        "expect_level": "낮음",
+        "expect_max_score": 20,
+    },
+    {
+        "id": 31,
+        "name": "AI + MOU 협약 — MOU not in action_terms → 낮음",
+        "title": "정부, AI 기반 교육 서비스 MOU 체결",
+        "desc": "교육부가 AI 기반 교육 혁신을 위해 여러 기관과 MOU를 체결했다.",
+        "query": "AI",
+        "expect_level": "낮음",
+        "expect_max_score": 20,
     },
 ]
 

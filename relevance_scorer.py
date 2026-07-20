@@ -312,6 +312,36 @@ def score_relevance(title: str, description: str, query_keyword: str = None) -> 
         if t_score > score:
             score = t_score
 
+    # ── 4b. broad_topic 독립 경로 (topic_h 없어도 작동) ─────────────────────
+    # query_keyword가 제목에 있고 (또는 동의어가 제목에 있고) 기업 기술/활동 맥락이
+    # cx에 있으면 35점 부여. topic_h 가드 없이 작동해 KTL류 실제 기사를 커버한다.
+    if q_type == "broad_topic" and score < 35:
+        bt_synonyms   = cfg.get("broad_topic_synonyms", {})
+        kw_synonyms   = _lower(bt_synonyms.get((query_keyword or "").upper(), []))
+        kw_in_tl_ind  = _keyword_in_title(query_keyword, tl)
+        synonym_in_tl = any(s in tl for s in kw_synonyms)
+        kw_or_syn_in_tl = kw_in_tl_ind or synonym_in_tl
+
+        broad_ctx  = _lower(cfg.get("broad_context_terms", []))
+        # 단어 경계 확인: "중소기업계"처럼 복합어 안에 묻힌 경우 오탐 방지
+        path_a = kw_or_syn_in_tl and any(_keyword_in_title(b, tl) for b in broad_ctx)
+
+        tech_terms   = _lower(cfg.get("enterprise_technology_terms", []))
+        action_terms = _lower(cfg.get("enterprise_action_terms", []))
+        kw_loose     = bool(query_keyword) and (query_keyword.lower() in tl)
+        tech_h_ind   = _hits(cx, tech_terms)
+        action_h_ind = _hits(cx, action_terms)
+        path_b = kw_loose and len(tech_h_ind) >= 1 and len(action_h_ind) >= 1
+
+        if (path_a or path_b) and not _hits(cx, local_):
+            score = 35
+            if path_a and not any("산업 문맥" in r for r in reasons):
+                reasons.append(f"검색 주제({query_keyword}) 제목 포함 + 산업 문맥")
+            elif path_b and not path_a:
+                reasons.append(
+                    f"기업 기술 맥락 ({','.join(tech_h_ind[:2])}) + 기술 활동 ({action_h_ind[0]})"
+                )
+
     # ── 5. 리스크 ────────────────────────────────────────────
     # 모호한 리스크 단어 문맥 검증
     valid_risks = []
@@ -364,7 +394,7 @@ def score_relevance(title: str, description: str, query_keyword: str = None) -> 
         rtype = "리스크"
     elif vendor_h and valid_impacts_final:
         rtype = "벤더"
-    elif topic_h and score >= 35:
+    elif (topic_h or q_type == "broad_topic") and score >= 35:
         rtype = "시장동향"
     elif 0 < comp_score < 55:
         rtype = "경쟁사"

@@ -294,3 +294,41 @@ consumer_or_local_terms:
   - 참관
   - 구인
   - 채용 공고
+
+# ── broad_topic 동의어 ────────────────────────────
+# query_keyword 독립 경로(4b)에서 제목 내 동의어로 인정
+broad_topic_synonyms:
+  AX:
+    - AI 전환
+    - 인공지능 전환
+    - 제조 AX
+    - 기업 AX
+    - 산업 AX
+
+# ── 기업 기술 맥락어 ──────────────────────────────
+# 4b 경로 Path B: 아래 중 1개 이상이 cx에 있으면 기업 기술 맥락으로 인정
+# 주의: 클라우드·SaaS는 business_topics와 중복 → topic_h 비어야 4b 진입
+enterprise_technology_terms:
+  - AI 인프라
+  - NPU
+  - GPU
+  - 데이터센터
+  - 클라우드
+  - 기업용
+  - 엔터프라이즈
+  - SaaS
+  - AI 에이전트
+  - 업무 시스템
+
+# ── 기업 기술 활동어 ──────────────────────────────
+# 4b 경로 Path B: 아래 중 1개 이상이 cx에 있으면 기업 기술 활동으로 인정
+# 의도적 제외: 출시·발표·공개·협약·MOU (단독으로 고신호 아님)
+enterprise_action_terms:
+  - 상용화
+  - 도입
+  - 채택
+  - 공급
+  - 구축
+  - 적용
+  - 고도화
+  - 전환
