@@ -412,7 +412,7 @@ class TestSelectArticles(unittest.TestCase):
         from collections import Counter
         cats = Counter(a["_monitoring_category"] for a in result)
         for cat, cnt in cats.items():
-            if cat not in {"리스크", "자사·관계사", "경쟁사"}:
+            if cat not in {"자사·관계사", "경쟁사"}:
                 self.assertLessEqual(cnt, 5, f"카테고리 '{cat}' 초과: {cnt}")
 
     @patch("monitoring.load_media_config")
@@ -651,13 +651,14 @@ class TestMonitoringIntegration(unittest.TestCase):
     def test_real_risk_detection_from_relevance_scorer(self):
         """score_relevance()가 기업 해킹·유출 기사를 '리스크' 타입으로 판정하면 _is_risk_priority=True."""
         from relevance_scorer import score_relevance
-        rel = score_relevance(
-            title="클라우드 서비스 해킹으로 고객 데이터 유출",
-            description="국내 기업의 클라우드 시스템이 해킹 공격을 받아 고객 개인정보가 유출됐다. 피해 규모가 확산되고 있다.",
-            query_keyword="사이버 공격 기업",
-        )
+        _title = "클라우드 서비스 해킹으로 고객 데이터 유출"
+        _desc  = "국내 기업의 클라우드 시스템이 해킹 공격을 받아 고객 개인정보가 유출됐다. 피해 규모가 확산되고 있다."
+        rel = score_relevance(title=_title, description=_desc, query_keyword="사이버 공격 기업")
         self.assertEqual(rel["_relevance_type"], "리스크",
                          "score_relevance가 해킹·유출 기사를 리스크로 판정해야 한다")
+        # _classify_monitoring_risk()는 title/description으로 시그널을 확인하므로 필드를 보장한다
+        rel.setdefault("title", _title)
+        rel.setdefault("description", _desc)
         rel["_matched_queries"] = ["cloud_security/사이버 공격 기업"]
         rel["_matched_groups"]  = ["cloud_security"]
         rel["score"] = 50
@@ -699,6 +700,241 @@ class TestMonitoringIntegration(unittest.TestCase):
         buzz   = r["score"]
         expected = max(0, min(100, round(rscore * 0.45 + buzz * 0.30 + pr * 0.25)))
         self.assertEqual(r["_monitoring_priority"], expected)
+
+
+# ══════════════════════════════════════════════════════════════
+# 5단계 신규 테스트 — _classify_monitoring_risk / 이벤트 클러스터링 / target_count
+# ══════════════════════════════════════════════════════════════
+
+def _make_risk_article(title, description="본문 내용 샘플", article_type="일반 기사"):
+    """리스크 타입 기사 픽스처."""
+    art = _make_scored_article(
+        "http://ex.com/risk_cls", title,
+        group="cloud_security", query="사이버 공격 기업",
+        relevance_type="리스크", relevance_level="높음",
+    )
+    art["description"]  = description
+    art["article_type"] = article_type
+    return art
+
+
+class TestClassifyMonitoringRisk(unittest.TestCase):
+    """_classify_monitoring_risk() 단위 테스트"""
+
+    def test_not_risk_when_relevance_type_not_risk(self):
+        """_relevance_type이 '리스크'가 아니면 항상 'not_risk'를 반환한다."""
+        art = _make_scored_article("http://ex.com/cr1", "AI 시장동향")
+        self.assertEqual(mon._classify_monitoring_risk(art), "not_risk")
+
+    def test_urgent_incident_data_breach(self):
+        """'데이터 유출' 시그널 → 'urgent_incident'."""
+        art = _make_risk_article("기업 고객 데이터 유출 사건 발생")
+        self.assertEqual(mon._classify_monitoring_risk(art), "urgent_incident")
+
+    def test_urgent_incident_ransomware(self):
+        """'랜섬웨어 감염' 시그널 → 'urgent_incident'."""
+        art = _make_risk_article("물류 기업 랜섬웨어 감염 피해 확산")
+        self.assertEqual(mon._classify_monitoring_risk(art), "urgent_incident")
+
+    def test_urgent_incident_침해사고(self):
+        """'침해 사고' 시그널 → 'urgent_incident'."""
+        art = _make_risk_article("국내 기업 침해 사고 신고 건수 급증")
+        self.assertEqual(mon._classify_monitoring_risk(art), "urgent_incident")
+
+    def test_urgent_incident_zero_day(self):
+        """'제로데이 공격' 시그널 → 'urgent_incident'."""
+        art = _make_risk_article("제로데이 공격 연쇄 발생 — 패치 적용 권고")
+        self.assertEqual(mon._classify_monitoring_risk(art), "urgent_incident")
+
+    def test_security_trend_no_signals(self):
+        """리스크 타입이지만 시그널 없음 → 'security_trend'."""
+        art = _make_risk_article("기업 보안 담당자 인터뷰 — 클라우드 전환 고민")
+        self.assertEqual(mon._classify_monitoring_risk(art), "security_trend")
+
+    def test_not_risk_product_launch(self):
+        """'정식 출시' 비사건 시그널 → 'not_risk'."""
+        art = _make_risk_article("보안 솔루션 정식 출시 — 엔터프라이즈 시장 공략")
+        self.assertEqual(mon._classify_monitoring_risk(art), "not_risk")
+
+    def test_not_risk_event_preview(self):
+        """'isec' 비사건 시그널 → 'not_risk'."""
+        art = _make_risk_article("isec 2026 미리보기 — 보안 트렌드 총정리")
+        self.assertEqual(mon._classify_monitoring_risk(art), "not_risk")
+
+    def test_not_risk_article_type_pr(self):
+        """article_type '보도자료형' → 'not_risk'."""
+        art = _make_risk_article("침해 사고 대응 솔루션 출시 보도자료",
+                                 article_type="보도자료형")
+        self.assertEqual(mon._classify_monitoring_risk(art), "not_risk")
+
+    def test_is_risk_priority_false_for_security_trend(self):
+        """security_trend 기사는 _is_risk_priority=False."""
+        art = _make_risk_article("기업 보안 담당자 인터뷰 — 클라우드 전환 고민")
+        art["score"] = 50
+        mon.score_monitoring_candidate(art)
+        self.assertFalse(art["_is_risk_priority"])
+
+
+class TestEventClustering(unittest.TestCase):
+    """이벤트 토큰·클러스터링 단위 테스트"""
+
+    def _base_art(self, title, priority=50, dt=None):
+        if dt is None:
+            dt = datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc)
+        art = _make_scored_article("http://ex.com/ev", title,
+                                   group="cloud_security",
+                                   query="사이버 공격 기업",
+                                   relevance_type="리스크")
+        art["_monitoring_priority"] = priority
+        art["_dt"] = dt
+        return art
+
+    def test_event_tokens_basic(self):
+        """기본 제목에서 의미 있는 토큰이 추출된다."""
+        tokens = mon._event_tokens("SGA솔루션즈 보안 취약점 침해")
+        self.assertIn("SGA솔루션즈", tokens)
+        self.assertIn("보안", tokens)
+        self.assertIn("취약점", tokens)
+        self.assertIn("침해", tokens)
+
+    def test_event_tokens_strip_particles(self):
+        """한국어 조사가 제거된 형태로 토큰화된다."""
+        tokens = mon._event_tokens("보안을 취약점에서 확인")
+        self.assertIn("보안", tokens)
+        self.assertIn("취약점", tokens)
+        self.assertNotIn("보안을", tokens)
+        self.assertNotIn("취약점에서", tokens)
+
+    def test_same_monitoring_event_true(self):
+        """공통 엔티티 토큰 3개 이상 → _same_monitoring_event True."""
+        a = self._base_art("SGA솔루션즈 보안 취약점 침해 사고 발생")
+        b = self._base_art("SGA솔루션즈 취약점 악용 보안 침해 사고")
+        self.assertTrue(mon._same_monitoring_event(a, b))
+
+    def test_different_events_not_same(self):
+        """공통 토큰 없는 기사 → _same_monitoring_event False."""
+        a = self._base_art("Microsoft 클라우드 서비스 업데이트 발표")
+        b = self._base_art("금융권 랜섬웨어 피해 복구 진행 중")
+        self.assertFalse(mon._same_monitoring_event(a, b))
+
+    def test_merge_event_clusters_reduces_count(self):
+        """같은 이벤트 2건 → _merge_monitoring_event_clusters 후 1건."""
+        a = self._base_art("SGA솔루션즈 보안 취약점 침해 사고 발생", priority=70)
+        b = self._base_art("SGA솔루션즈 취약점 악용 보안 침해 사고", priority=60)
+        a["_matched_queries"] = ["cloud_security/사이버 공격 기업"]
+        b["_matched_queries"] = ["cloud_security/사이버 보안"]
+        a["_matched_groups"]  = ["cloud_security"]
+        b["_matched_groups"]  = ["cloud_security"]
+        result = mon._merge_monitoring_event_clusters([a, b])
+        self.assertEqual(len(result), 1)
+
+    def test_merge_keeps_higher_priority_rep(self):
+        """_merge_monitoring_event_clusters는 우선순위 높은 기사를 대표로 선택한다."""
+        a = self._base_art("SGA솔루션즈 보안 취약점 침해 사고 발생", priority=70)
+        b = self._base_art("SGA솔루션즈 취약점 악용 보안 침해 사고", priority=40)
+        a["_matched_queries"] = ["cloud_security/q1"]
+        b["_matched_queries"] = ["cloud_security/q2"]
+        a["_matched_groups"]  = ["cloud_security"]
+        b["_matched_groups"]  = ["cloud_security"]
+        result = mon._merge_monitoring_event_clusters([a, b])
+        self.assertEqual(result[0]["_monitoring_priority"], 70)
+
+    def test_merge_combines_matched_queries(self):
+        """병합된 클러스터 대표 기사에 모든 _matched_queries가 합쳐진다."""
+        a = self._base_art("SGA솔루션즈 보안 취약점 침해 사고 발생", priority=70)
+        b = self._base_art("SGA솔루션즈 취약점 악용 보안 침해 사고", priority=40)
+        a["_matched_queries"] = ["cloud_security/사이버 공격 기업"]
+        b["_matched_queries"] = ["cloud_security/클라우드 보안"]
+        a["_matched_groups"]  = ["cloud_security"]
+        b["_matched_groups"]  = ["cloud_security"]
+        result = mon._merge_monitoring_event_clusters([a, b])
+        mq = result[0]["_matched_queries"]
+        self.assertIn("cloud_security/사이버 공격 기업", mq)
+        self.assertIn("cloud_security/클라우드 보안", mq)
+
+
+class TestTargetCountAndRiskCap(unittest.TestCase):
+    """target_count 준수 및 리스크 카테고리 상한 테스트"""
+
+    def _make_pool(self, n, group, query, relevance_type="시장동향",
+                   relevance_level="높음", description="본문 내용 샘플"):
+        arts = []
+        for i in range(n):
+            a = _make_scored_article(
+                f"http://ex.com/pool_{group}_{i}",
+                f"{group} 동향 기사 사례 분석 보도 {i}",
+                group=group, query=query,
+                relevance_type=relevance_type,
+                relevance_level=relevance_level,
+                media_name=f"매체_{group}_{i}",
+            )
+            a["_matched_groups"] = [group]
+            a["description"] = description
+            arts.append(a)
+        return arts
+
+    @patch("monitoring.load_media_config")
+    @patch("monitoring.calculate_article_score", return_value=50)
+    @patch("monitoring.cluster_articles", side_effect=lambda arts, **kw:
+           [{"rep": a, "cluster": [a], "size": 1} for a in arts])
+    def test_stops_at_target_count(self, mock_cl, mock_score, mock_mc):
+        """target_count 도달 후 must-include 아닌 기사는 추가 선정하지 않는다."""
+        mock_mc.return_value = {}
+        arts = (
+            self._make_pool(5, "ai_ax", "기업 AI")
+            + self._make_pool(5, "cloud_security", "클라우드 보안")
+            + self._make_pool(5, "vendor", "Microsoft")
+            + self._make_pool(5, "ai_ax", "AI 인프라")
+        )
+        result = mon.select_daily_monitoring_articles(arts, target_count=3, max_count=20)
+        self.assertEqual(len(result), 3)
+
+    @patch("monitoring.load_media_config")
+    @patch("monitoring.calculate_article_score", return_value=50)
+    @patch("monitoring.cluster_articles", side_effect=lambda arts, **kw:
+           [{"rep": a, "cluster": [a], "size": 1} for a in arts])
+    def test_risk_capped_at_max_risk_count(self, mock_cl, mock_score, mock_mc):
+        """리스크 카테고리 기사는 최대 _MAX_RISK_COUNT(5)개만 선정된다."""
+        mock_mc.return_value = {}
+        arts = self._make_pool(
+            10, "cloud_security", "사이버 공격 기업",
+            relevance_type="리스크",
+            description="침해 사고 발생",
+        )
+        result = mon.select_daily_monitoring_articles(arts, target_count=15, max_count=20)
+        from collections import Counter
+        cats = Counter(a["_monitoring_category"] for a in result)
+        self.assertLessEqual(cats.get("리스크", 0), mon._MAX_RISK_COUNT)
+
+    @patch("monitoring.load_media_config")
+    @patch("monitoring.calculate_article_score", return_value=50)
+    @patch("monitoring.cluster_articles", side_effect=lambda arts, **kw:
+           [{"rep": a, "cluster": [a], "size": 1} for a in arts])
+    def test_unlimited_cat_exceeds_target(self, mock_cl, mock_score, mock_mc):
+        """자사·관계사 카테고리는 target_count를 초과해 선정될 수 있다."""
+        mock_mc.return_value = {}
+        # 제목을 충분히 다르게 해 2차 이벤트 클러스터링에 묶이지 않게 한다
+        titles = [
+            "SCK 클라우드 인프라 구축 계약 체결",
+            "SCK 금융 고객 AX 전환 성과 발표",
+            "에쓰씨케이 제조 부문 신규 수주 달성",
+            "SCK Corp AI 도입 기업 증가 보고",
+        ]
+        arts = []
+        for i, title in enumerate(titles):
+            a = _make_scored_article(
+                f"http://ex.com/co{i}", title,
+                group="company", query="SCK",
+                relevance_type="자사·관계사", relevance_level="높음",
+                media_name=f"매체_{i}",
+            )
+            a["_matched_groups"] = ["company"]
+            arts.append(a)
+        result = mon.select_daily_monitoring_articles(arts, target_count=2, max_count=20)
+        company_count = sum(
+            1 for a in result if a["_monitoring_category"] == "자사·관계사"
+        )
+        self.assertGreater(company_count, 2)
 
 
 # ══════════════════════════════════════════════════════════════
