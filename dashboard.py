@@ -14,6 +14,11 @@ import streamlit as st
 import github_storage as gh
 import news_fetcher as nf
 from collector import collect_single_keyword
+import monitoring as mon
+from monitoring_tab_helpers import (
+    today_kst, monitoring_config_version,
+    apply_category_filter, count_by_category, make_widget_key,
+)
 
 # ── 상수 ──────────────────────────────────────────────────
 BUILD_VERSION = "2026-07-06-KEYWORD-V7"
@@ -798,6 +803,28 @@ NOW_STR= datetime.now().strftime("%Y.%m.%d %H:%M")
 SYNC   = "GitHub 동기화" if gh.is_configured() else "로컬 모드"
 MEDIA_CFG = nf.load_media_config()
 
+# ── PR 모니터링 당일 캐시 ─────────────────────────────────────
+_MON_CONFIG_PATH = mon.CONFIG_PATH
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_daily_monitoring_cached(date_key: str, refresh_token: int, config_version: str):
+    """
+    최근 24시간 PR 모니터링 결과를 캐싱한다.
+    캐시 키: date_key(KST 날짜) / refresh_token(강제 새로고침) / config_version(설정 해시)
+    """
+    cid, csc = _get_naver_creds()
+    _end   = datetime.now(timezone.utc)
+    _start = _end - timedelta(hours=24)
+    candidates = mon.fetch_daily_monitoring_candidates(
+        _start, _end, cid=cid, csc=csc, media_config=MEDIA_CFG
+    )
+    selected = mon.select_daily_monitoring_articles(
+        candidates, target_count=15, max_count=20, media_config=MEDIA_CFG
+    )
+    updated_at = _end + timedelta(hours=9)  # KST
+    stats = {"candidate_count": len(candidates), "selected_count": len(selected)}
+    return selected, updated_at, stats
+
 st.markdown(f"""
 <div class="kd-header">
   <div class="kd-logo">
@@ -1343,14 +1370,16 @@ with tab3:
 
 
 # ════════════════════════════════════════════════════════
-# TAB 4 · 관련 뉴스 수집
+# TAB 4 · PR 모니터링 & 관련 뉴스 수집
 # ════════════════════════════════════════════════════════
 with tab4:
-    if "t4_results"     not in st.session_state: st.session_state["t4_results"]     = {}
-    if "t4_last_fetch"  not in st.session_state: st.session_state["t4_last_fetch"]  = None
-    if "t4_clusters"    not in st.session_state: st.session_state["t4_clusters"]    = {}
-    if "t4_mon_kws"     not in st.session_state: st.session_state["t4_mon_kws"]     = []
-    if "t4_mon_history" not in st.session_state: st.session_state["t4_mon_history"] = []
+    # ── 세션 상태 초기화 ────────────────────────────────
+    for _k, _v in [("t4_results", {}), ("t4_last_fetch", None),
+                   ("t4_clusters", {}), ("t4_mon_kws", []),
+                   ("t4_mon_history", []), ("mon_refresh_token", 0),
+                   ("mon_cat_filter", "전체")]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
 
     def _t4_kw_add(kw: str) -> bool:
         kw = kw.strip()
@@ -1375,352 +1404,538 @@ with tab4:
             return ("시장 동향 브리핑 참고 기사", False)
         return ("온드미디어 콘텐츠 소재로 검토 가능", False)
 
-    st.markdown("""<div class="sh-main"><div class="t">관련 뉴스 수집</div>
-<div class="s">등록 또는 입력한 키워드를 기준으로 관련 기사를 수집하고, 주요 기사 후보를 선별합니다.</div></div>""",
-                unsafe_allow_html=True)
-
-    # ── 수집 플로우 표시 ───────────────────────────────────────────
-    st.markdown("""<div style='margin-bottom:1rem'>
-<span class='flow-step'>① 키워드 입력</span><span class='flow-arrow'> → </span>
-<span class='flow-step'>② 조건 설정</span><span class='flow-arrow'> → </span>
-<span class='flow-step'>③ 기사 수집</span><span class='flow-arrow'> → </span>
-<span class='flow-step'>④ 주요 기사 선별</span><span class='flow-arrow'> → </span>
-<span class='flow-step'>⑤ 활용처 등록</span>
-</div>""", unsafe_allow_html=True)
-
-    # ── 요약 지표 카드 ─────────────────────────────────────────────
-    _t4_res_cur  = st.session_state.get("t4_results", {})
-    _t4_cl_cur   = st.session_state.get("t4_clusters", {})
-    _stat_kws    = len(_t4_res_cur)
-    _stat_raw    = sum(v.get("raw_count", 0)      for v in _t4_res_cur.values())
-    _stat_filt   = sum(v.get("filtered_count", 0)  for v in _t4_res_cur.values())
-    _stat_sel    = sum(len(v) for v in _t4_cl_cur.values())
-    _stat_util   = count_news_util()
-    _sc1,_sc2,_sc3,_sc4,_sc5 = st.columns(5)
-    for _sc,_num,_lbl in [(_sc1,_stat_kws,"수집 키워드"),(_sc2,_stat_raw,"원본 기사"),
-                           (_sc3,_stat_filt,"중복 제거 후"),(_sc4,_stat_sel,"선별 기사"),
-                           (_sc5,_stat_util,"활용처 등록")]:
-        with _sc:
-            st.markdown(f"<div class='news-stat-card'><div class='news-stat-num'>{_num}</div>"
-                        f"<div class='news-stat-lbl'>{_lbl}</div></div>", unsafe_allow_html=True)
-    st.markdown("<div style='margin-bottom:1rem'></div>", unsafe_allow_html=True)
-
-    # ── 조회 조건 (expander로 정돈) ──────────────────────────────
-    with st.expander("🔧 조회 조건 설정", expanded=not bool(_t4_res_cur)):
-        st.markdown("""<p style='font-size:13px;font-weight:700;color:#344054;margin:0 0 4px'>
-분석 키워드 <span style='font-size:11px;font-weight:400;color:#94A3B8'>최대 5개 · 키워드별 독립 검색(OR) 후 결과 종합 표시</span></p>""",
+    # ══════════════════════════════════════════════════════
+    # ① 오늘의 PR 모니터링
+    # ══════════════════════════════════════════════════════
+    _mhdr_c1, _mhdr_c2 = st.columns([5, 1])
+    with _mhdr_c1:
+        st.markdown("""<div class="sh-main">
+<div class="t">오늘의 PR 모니터링</div>
+<div class="s">최근 24시간 기준 SCK 커뮤니케이션팀이 확인할 주요 기사</div></div>""",
                     unsafe_allow_html=True)
+    with _mhdr_c2:
+        st.markdown("<div style='margin-top:1.3rem'></div>", unsafe_allow_html=True)
+        if st.button("새로고침", key="mon_refresh_btn", type="secondary",
+                     use_container_width=True):
+            st.session_state["mon_refresh_token"] += 1
+            st.rerun()
 
-        _mon_kws = st.session_state["t4_mon_kws"]
-        if _mon_kws:
-            _chip_cols = st.columns(5)
-            for _ci, _ckw in enumerate(_mon_kws):
-                with _chip_cols[_ci]:
-                    if st.button(f"× {_ckw}", key=f"t4_rm_{_ci}",
-                                 type="primary", use_container_width=True):
-                        st.session_state["t4_mon_kws"].pop(_ci); st.rerun()
+    _today_key  = today_kst()
+    _cfg_ver    = monitoring_config_version(_MON_CONFIG_PATH)
+    _refresh_tok = st.session_state["mon_refresh_token"]
 
-        if len(_mon_kws) < 5:
-            with st.form("t4_kw_add_form", clear_on_submit=True, border=False):
-                _fi1, _fi2 = st.columns([8, 1])
-                with _fi1:
-                    _new_kw = st.text_input("키워드 입력",
-                                            placeholder="키워드 입력 후 Enter 또는 추가 클릭",
-                                            label_visibility="collapsed")
-                with _fi2:
-                    _kw_add_btn = st.form_submit_button("추가", use_container_width=True)
-            if _kw_add_btn and _new_kw.strip():
-                _t4_kw_add(_new_kw); st.rerun()
+    _mon_selected  = []
+    _mon_updated_at = None
+    _mon_error     = False
 
-        _imp_col, _hist_col = st.columns([3, 7])
-        with _imp_col:
-            if st.button("↓ 트렌드 탭 키워드 불러오기", key="t4_mon_import",
-                         use_container_width=True, type="secondary"):
-                for _tk in load_tracked_keywords():
-                    _t4_kw_add(_tk)
-                st.rerun()
-        with _hist_col:
-            _hist = st.session_state["t4_mon_history"]
-            if _hist:
-                st.markdown("<span style='font-size:11.5px;color:#667085'>최근 검색: </span>",
-                            unsafe_allow_html=True)
-                _hc = st.columns(min(5, len(_hist)))
-                for _hi, _hkw in enumerate(_hist[:5]):
-                    with _hc[_hi]:
-                        if st.button(_hkw, key=f"t4_hist_{_hi}", type="secondary",
-                                     use_container_width=True):
-                            _t4_kw_add(_hkw); st.rerun()
+    with st.spinner("최근 24시간 뉴스를 수집하고 있습니다. 최초 실행에는 시간이 걸릴 수 있습니다."):
+        try:
+            _mon_selected, _mon_updated_at, _ = _get_daily_monitoring_cached(
+                _today_key, _refresh_tok, _cfg_ver
+            )
+        except Exception:
+            _mon_error = True
 
-        st.markdown("<hr style='margin:.5rem 0 .8rem'>", unsafe_allow_html=True)
+    if _mon_error:
+        st.error("모니터링 수집 중 오류가 발생했습니다. "
+                 "잠시 후 새로고침하거나 하단의 직접 키워드 검색을 이용해 주세요.")
+    else:
+        _mon_cnt = len(_mon_selected)
+        _upd_str = (_mon_updated_at.strftime("%Y.%m.%d %H:%M KST")
+                    if _mon_updated_at else "—")
+        st.caption(f"마지막 업데이트: {_upd_str}  ·  최종 선정 {_mon_cnt}건")
 
-        t4_days = st.radio("조회 기간", ["최근 7일", "최근 14일", "최근 30일"],
-                           horizontal=True, key="t4_days_r")
-        _fc, _fd, _fe = st.columns([3, 3, 3])
-        with _fc: t4_scope = st.selectbox("언론사 범위", ["주요 제휴·우선 매체만", "전체 뉴스 검색 결과"], key="t4_scope")
-        with _fd: t4_type  = st.selectbox("기사 유형", ["전체", "보도자료형", "기획·분석", "인터뷰", "행사·현장", "일반 기사"], key="t4_type")
-        with _fe: t4_sort  = st.selectbox("정렬", ["추천순", "화제성순", "최신순"], key="t4_sort")
+        if _mon_cnt < 10:
+            st.info(f"최근 24시간 기준, 모니터링 기준을 통과한 기사는 총 {_mon_cnt}건입니다.")
 
-        st.caption("※ 화제성 추정 점수는 매체 우선순위, 키워드 포함도, 최신성, 중복 보도 여부 등을 기준으로 산출한 내부 참고 지표입니다. 실제 기사 영향력 또는 PR 성과로 단정하지 않습니다.")
+        # ── ② 카테고리 필터 (캐시 결과에만 적용 — API 재호출 없음) ──
+        _ALL_CATS = ["전체","리스크","자사·관계사","경쟁사","기획기사 후보",
+                     "AI·AX 시장동향","클라우드·보안","주요 벤더","기타"]
+        _cat_counts = count_by_category(_mon_selected)
 
-        _btn_a, _btn_b = st.columns([3, 1])
-        _t4_cur_kws = st.session_state["t4_mon_kws"]
-        with _btn_a:
-            t4_fetch = st.button("기사 불러오기", type="primary", use_container_width=True,
-                                 key="t4_fetch_btn", disabled=not _t4_cur_kws)
-        with _btn_b:
-            t4_reset = st.button("결과 지우기", type="secondary", use_container_width=True, key="t4_rf_btn")
-        _last_f = st.session_state.get("t4_last_fetch")
-        if _last_f:
-            _last_str = _last_f.strftime("%Y.%m.%d %H:%M") if hasattr(_last_f, "strftime") else str(_last_f)
-            st.caption(f"마지막 업데이트 {_last_str} KST")
+        _filter_labels = []
+        for _cat in _ALL_CATS:
+            _cnt_c = len(_mon_selected) if _cat == "전체" else _cat_counts.get(_cat, 0)
+            _filter_labels.append(f"{_cat} {_cnt_c}" if _cnt_c else _cat)
+
+        _cur_cat = st.session_state.get("mon_cat_filter", "전체")
+        _cat_sel_idx = (_ALL_CATS.index(_cur_cat) if _cur_cat in _ALL_CATS else 0)
+
+        _cat_choice = st.radio(
+            "카테고리 필터", _filter_labels,
+            index=_cat_sel_idx, horizontal=True,
+            key="mon_cat_radio", label_visibility="collapsed",
+        )
+        _cat_active = _ALL_CATS[_filter_labels.index(_cat_choice)] if _cat_choice in _filter_labels else "전체"
+        if _cat_active != st.session_state["mon_cat_filter"]:
+            st.session_state["mon_cat_filter"] = _cat_active
+
+        # ── 기사 카드 ─────────────────────────────────────
+        _ranked = apply_category_filter(_mon_selected, _cat_active)
+
+        if not _ranked:
+            st.caption("해당 카테고리에 선정된 기사가 없습니다.")
         else:
-            st.caption("키워드를 입력한 뒤 '기사 불러오기'를 눌러주세요.")
+            _CAT_STYLE = {
+                "리스크":       ("#FEF3C7","#92400E"),
+                "자사·관계사":  ("#EDE9FE","#5B21B6"),
+                "경쟁사":       ("#FDF4FF","#7e22ce"),
+                "기획기사 후보":("#ECFDF5","#065F46"),
+                "AI·AX 시장동향":("#EFF6FF","#1E40AF"),
+                "클라우드·보안":("#F0FDF4","#166534"),
+                "주요 벤더":    ("#F1F5F9","#475569"),
+                "기타":         ("#F1F5F9","#475569"),
+            }
+            for _rank, _art in _ranked:
+                _mon_url  = _art.get("url", "")
+                _mon_ak   = make_widget_key("monitoring_util", _mon_url or f"no_url_{_rank}")
+                _mon_ttl  = _art.get("title", "")
+                _mon_mn   = _art.get("media_name", "")
+                _mon_dt   = _art.get("pub_datetime", "")
+                _mon_at   = _art.get("article_type", "")
+                _mon_cat  = _art.get("_monitoring_category", "기타")
+                _mon_rl   = _art.get("_relevance_level", "")
+                _mon_rws  = _art.get("_relevance_reasons", [])
+                _mon_why  = _art.get("_monitoring_reason", "")
+                _mon_sc   = _art.get("score", 0)
+                _mon_wl   = _art.get("_in_whitelist", False)
+                _mon_pri  = _art.get("_monitoring_priority", 0)
+                _mon_prscore = _art.get("_pr_value_score", 0)
+                _mon_rsc  = _art.get("_relevance_score", 0)
+                _mon_mqs  = _art.get("_matched_queries", [])
+                _mon_mgs  = _art.get("_matched_groups", [])
 
-    if t4_reset:
-        st.session_state["t4_results"]={}; st.session_state["t4_clusters"]={}
-        st.session_state["t4_last_fetch"]=None; st.rerun()
+                _cat_bg, _cat_fg = _CAT_STYLE.get(_mon_cat, ("#F1F5F9","#475569"))
+                _rl_cls = {"높음":"rel-high","보통":"rel-mid","낮음":"rel-low"}.get(_mon_rl,"rel-mid")
 
-    if t4_fetch and _t4_cur_kws:
-        days_map  = {"최근 7일": 7, "최근 14일": 14, "최근 30일": 30}
-        n_days    = days_map.get(t4_days, 7)
-        date_to   = datetime.now().strftime("%Y-%m-%d")
-        date_from = (datetime.now() - timedelta(days=n_days)).strftime("%Y-%m-%d")
-        sort_api  = "date" if t4_sort == "최신순" else "sim"
-        scope_key = "whitelist" if "주요" in t4_scope else "all"
-        type_f    = "" if t4_type == "전체" else t4_type
-        cid, csc  = _get_naver_creds()
-        new_results = {}; new_clusters = {}
-        prog = st.progress(0, "기사 수집 중…")
-        for i, kw in enumerate(_t4_cur_kws):
-            prog.progress(i / max(len(_t4_cur_kws), 1),
-                          f"'{kw}' 기사 수집 중 ({i+1}/{len(_t4_cur_kws)})")
-            _res = nf.fetch_articles_for_keyword(keyword=kw, date_from=date_from, date_to=date_to,
-                                                 sort_api=sort_api, media_scope=scope_key,
-                                                 article_type_filter=type_f, cid=cid, csc=csc,
-                                                 media_config=MEDIA_CFG, display=100)
-            new_results[kw] = _res
-            new_clusters[kw] = (nf.process_and_score(_res["articles"], MEDIA_CFG, t4_sort)
-                                if _res["status"] == "success" and _res["articles"] else [])
-        prog.progress(1.0, "완료")
-        now_kst = datetime.now(timezone.utc) + timedelta(hours=9)
-        st.session_state["t4_results"]    = new_results
-        st.session_state["t4_clusters"]   = new_clusters
-        st.session_state["t4_last_fetch"] = now_kst
-        for _hkw in _t4_cur_kws:
-            if _hkw in st.session_state["t4_mon_history"]:
-                st.session_state["t4_mon_history"].remove(_hkw)
-            st.session_state["t4_mon_history"].insert(0, _hkw)
-        st.session_state["t4_mon_history"] = st.session_state["t4_mon_history"][:10]
-        st.rerun()
+                with st.container(border=True):
+                    # 순위 + 카테고리 + 관련성 배지 행
+                    _badge_parts = [
+                        f"<span style='font-size:13px;font-weight:800;color:#102A43'>#{_rank}</span>",
+                        f"<span style='display:inline-block;background:{_cat_bg};color:{_cat_fg};"
+                        f"border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700'>{_mon_cat}</span>",
+                    ]
+                    if _mon_rl in ("높음", "보통"):
+                        _badge_parts.append(f"<span class='{_rl_cls}'>관련성 {_mon_rl}</span>")
+                    st.markdown(" ".join(_badge_parts), unsafe_allow_html=True)
 
-    t4_res      = st.session_state.get("t4_results", {})
-    t4_clusters = st.session_state.get("t4_clusters", {})
+                    # 제목
+                    if _mon_url:
+                        st.markdown(f"**[{_mon_ttl}]({_mon_url})**")
+                    else:
+                        st.markdown(f"**{_mon_ttl}**")
 
-    if not t4_clusters:
-        st.markdown("""<div class='notice-box'>
+                    # 메타 (매체 · 발행시간)
+                    _meta_parts = [p for p in [_mon_mn, _mon_dt] if p]
+                    if _meta_parts:
+                        st.markdown(f"<span class='art-meta'>{' · '.join(_meta_parts)}</span>",
+                                    unsafe_allow_html=True)
+
+                    # 선정 이유
+                    if _mon_why:
+                        st.markdown(
+                            f"<div style='font-size:12.5px;color:#344054;margin:4px 0;line-height:1.5'>"
+                            f"📌 {_mon_why}</div>",
+                            unsafe_allow_html=True)
+
+                    # PR 활용 제안
+                    _sug, _is_risk_sug = _pr_suggest(_mon_at, _mon_sc, _mon_wl, _mon_ttl)
+                    _sug_cls = "art-suggest risk" if _is_risk_sug else "art-suggest"
+                    st.markdown(f"<span class='{_sug_cls}'>💡 {_sug}</span>",
+                                unsafe_allow_html=True)
+
+                    # 판정 근거 (expander)
+                    with st.expander("판정 근거 보기"):
+                        _dc1, _dc2 = st.columns(2)
+                        with _dc1:
+                            st.markdown(f"**모니터링 우선순위**: {_mon_pri}")
+                            st.markdown(f"**SCK 관련성**: {_mon_rsc}")
+                            st.markdown(f"**뉴스 중요도**: {_mon_sc}")
+                            st.markdown(f"**PR 활용도**: {_mon_prscore}")
+                        with _dc2:
+                            st.markdown(f"**수집 검색어**: {', '.join(_mon_mqs) if _mon_mqs else '—'}")
+                            st.markdown(f"**수집 영역**: {', '.join(_mon_mgs) if _mon_mgs else '—'}")
+                            if _mon_rws:
+                                st.markdown(f"**판정 근거**: {' · '.join(_mon_rws[:3])}")
+
+                    # 액션 버튼 행
+                    _mba, _mbb = st.columns([1, 1])
+                    with _mba:
+                        if _mon_url:
+                            st.link_button("기사 원문", _mon_url, use_container_width=True)
+                    with _mbb:
+                        _mon_reg_k = f"mon_reg_open_{_mon_ak}"
+                        if _mon_reg_k not in st.session_state:
+                            st.session_state[_mon_reg_k] = False
+                        if st.button("활용처 등록", key=f"{_mon_ak}_regbtn",
+                                     use_container_width=True, type="primary"):
+                            st.session_state[_mon_reg_k] = not st.session_state[_mon_reg_k]
+                            st.rerun()
+
+                    # 활용처 등록 인라인 폼
+                    if st.session_state.get(_mon_reg_k, False):
+                        _sel_m = st.selectbox(
+                            "활용처", NEWS_UTIL_USAGES,
+                            key=f"{_mon_ak}_usage",
+                            label_visibility="collapsed")
+                        _memo_m = st.text_input(
+                            "메모", key=f"{_mon_ak}_memo",
+                            placeholder="관련 메모 (선택 사항)",
+                            label_visibility="collapsed")
+                        _mcs1, _mcs2 = st.columns([1, 1])
+                        with _mcs1:
+                            if st.button("저장", key=f"{_mon_ak}_save",
+                                         type="primary", use_container_width=True):
+                                _kw_m = _art.get("_source_query", "")
+                                add_news_util(_mon_ttl, _mon_url, _mon_mn,
+                                              _art.get("pub_date", ""), _kw_m, _sel_m, _memo_m)
+                                if _sel_m in ("PR 파이프라인 소재", "온드미디어 소재"):
+                                    _ctype_m = "PR 기사" if "PR" in _sel_m else "온드미디어"
+                                    if add_content(_kw_m, CURRENT_MONTH, _ctype_m,
+                                                   _mon_ttl, _mon_url, _art.get("pub_date","")):
+                                        _inv_content(); _inv_derived()
+                                st.session_state[_mon_reg_k] = False
+                                st.toast(f"등록됨 — {_sel_m}")
+                                st.rerun()
+                        with _mcs2:
+                            if st.button("취소", key=f"{_mon_ak}_cancel",
+                                         type="secondary", use_container_width=True):
+                                st.session_state[_mon_reg_k] = False
+                                st.rerun()
+
+    st.markdown("<hr style='margin:2rem 0 1.5rem'>", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════
+    # ③ 직접 키워드 검색 (기존 기능 — expander 안으로 이동)
+    # ══════════════════════════════════════════════════════
+    with st.expander("🔍 직접 키워드 검색",
+                     expanded=bool(st.session_state.get("t4_clusters"))):
+
+        # 요약 지표 카드
+        _t4_res_cur = st.session_state.get("t4_results", {})
+        _t4_cl_cur  = st.session_state.get("t4_clusters", {})
+        _stat_kws   = len(_t4_res_cur)
+        _stat_raw   = sum(v.get("raw_count", 0)       for v in _t4_res_cur.values())
+        _stat_filt  = sum(v.get("filtered_count", 0)   for v in _t4_res_cur.values())
+        _stat_sel   = sum(len(v)                       for v in _t4_cl_cur.values())
+        _stat_util  = count_news_util()
+        _sc1,_sc2,_sc3,_sc4,_sc5 = st.columns(5)
+        for _sc,_num,_lbl in [(_sc1,_stat_kws,"수집 키워드"),(_sc2,_stat_raw,"원본 기사"),
+                               (_sc3,_stat_filt,"중복 제거 후"),(_sc4,_stat_sel,"선별 기사"),
+                               (_sc5,_stat_util,"활용처 등록")]:
+            with _sc:
+                st.markdown(f"<div class='news-stat-card'><div class='news-stat-num'>{_num}</div>"
+                            f"<div class='news-stat-lbl'>{_lbl}</div></div>",
+                            unsafe_allow_html=True)
+        st.markdown("<div style='margin-bottom:1rem'></div>", unsafe_allow_html=True)
+
+        # 조회 조건 설정
+        with st.expander("🔧 조회 조건 설정", expanded=not bool(_t4_res_cur)):
+            st.markdown("""<p style='font-size:13px;font-weight:700;color:#344054;margin:0 0 4px'>
+분석 키워드 <span style='font-size:11px;font-weight:400;color:#94A3B8'>최대 5개 · 키워드별 독립 검색(OR) 후 결과 종합 표시</span></p>""",
+                        unsafe_allow_html=True)
+
+            _mon_kws = st.session_state["t4_mon_kws"]
+            if _mon_kws:
+                _chip_cols = st.columns(5)
+                for _ci, _ckw in enumerate(_mon_kws):
+                    with _chip_cols[_ci]:
+                        if st.button(f"× {_ckw}", key=f"t4_rm_{_ci}",
+                                     type="primary", use_container_width=True):
+                            st.session_state["t4_mon_kws"].pop(_ci); st.rerun()
+
+            if len(_mon_kws) < 5:
+                with st.form("t4_kw_add_form", clear_on_submit=True, border=False):
+                    _fi1, _fi2 = st.columns([8, 1])
+                    with _fi1:
+                        _new_kw = st.text_input("키워드 입력",
+                                                placeholder="키워드 입력 후 Enter 또는 추가 클릭",
+                                                label_visibility="collapsed")
+                    with _fi2:
+                        _kw_add_btn = st.form_submit_button("추가", use_container_width=True)
+                if _kw_add_btn and _new_kw.strip():
+                    _t4_kw_add(_new_kw); st.rerun()
+
+            _imp_col, _hist_col = st.columns([3, 7])
+            with _imp_col:
+                if st.button("↓ 트렌드 탭 키워드 불러오기", key="t4_mon_import",
+                             use_container_width=True, type="secondary"):
+                    for _tk in load_tracked_keywords():
+                        _t4_kw_add(_tk)
+                    st.rerun()
+            with _hist_col:
+                _hist = st.session_state["t4_mon_history"]
+                if _hist:
+                    st.markdown("<span style='font-size:11.5px;color:#667085'>최근 검색: </span>",
+                                unsafe_allow_html=True)
+                    _hc = st.columns(min(5, len(_hist)))
+                    for _hi, _hkw in enumerate(_hist[:5]):
+                        with _hc[_hi]:
+                            if st.button(_hkw, key=f"t4_hist_{_hi}", type="secondary",
+                                         use_container_width=True):
+                                _t4_kw_add(_hkw); st.rerun()
+
+            st.markdown("<hr style='margin:.5rem 0 .8rem'>", unsafe_allow_html=True)
+
+            t4_days = st.radio("조회 기간", ["최근 7일", "최근 14일", "최근 30일"],
+                               horizontal=True, key="t4_days_r")
+            _fc, _fd, _fe = st.columns([3, 3, 3])
+            with _fc: t4_scope = st.selectbox("언론사 범위", ["주요 제휴·우선 매체만", "전체 뉴스 검색 결과"], key="t4_scope")
+            with _fd: t4_type  = st.selectbox("기사 유형", ["전체","보도자료형","기획·분석","인터뷰","행사·현장","일반 기사"], key="t4_type")
+            with _fe: t4_sort  = st.selectbox("정렬", ["추천순","화제성순","최신순"], key="t4_sort")
+
+            st.caption("※ 화제성 추정 점수는 매체 우선순위, 키워드 포함도, 최신성, 중복 보도 여부 등을 기준으로 산출한 내부 참고 지표입니다. 실제 기사 영향력 또는 PR 성과로 단정하지 않습니다.")
+
+            _btn_a, _btn_b = st.columns([3, 1])
+            _t4_cur_kws = st.session_state["t4_mon_kws"]
+            with _btn_a:
+                t4_fetch = st.button("기사 불러오기", type="primary", use_container_width=True,
+                                     key="t4_fetch_btn", disabled=not _t4_cur_kws)
+            with _btn_b:
+                t4_reset = st.button("결과 지우기", type="secondary", use_container_width=True, key="t4_rf_btn")
+            _last_f = st.session_state.get("t4_last_fetch")
+            if _last_f:
+                _last_str = _last_f.strftime("%Y.%m.%d %H:%M") if hasattr(_last_f, "strftime") else str(_last_f)
+                st.caption(f"마지막 업데이트 {_last_str} KST")
+            else:
+                st.caption("키워드를 입력한 뒤 '기사 불러오기'를 눌러주세요.")
+
+        if t4_reset:
+            st.session_state["t4_results"]   = {}
+            st.session_state["t4_clusters"]  = {}
+            st.session_state["t4_last_fetch"] = None
+            st.rerun()
+
+        if t4_fetch and _t4_cur_kws:
+            days_map  = {"최근 7일": 7, "최근 14일": 14, "최근 30일": 30}
+            n_days    = days_map.get(t4_days, 7)
+            date_to   = datetime.now().strftime("%Y-%m-%d")
+            date_from = (datetime.now() - timedelta(days=n_days)).strftime("%Y-%m-%d")
+            sort_api  = "date" if t4_sort == "최신순" else "sim"
+            scope_key = "whitelist" if "주요" in t4_scope else "all"
+            type_f    = "" if t4_type == "전체" else t4_type
+            cid, csc  = _get_naver_creds()
+            new_results = {}; new_clusters = {}
+            prog = st.progress(0, "기사 수집 중…")
+            for i, kw in enumerate(_t4_cur_kws):
+                prog.progress(i / max(len(_t4_cur_kws), 1),
+                              f"'{kw}' 기사 수집 중 ({i+1}/{len(_t4_cur_kws)})")
+                _res = nf.fetch_articles_for_keyword(
+                    keyword=kw, date_from=date_from, date_to=date_to,
+                    sort_api=sort_api, media_scope=scope_key,
+                    article_type_filter=type_f, cid=cid, csc=csc,
+                    media_config=MEDIA_CFG, display=100)
+                new_results[kw] = _res
+                new_clusters[kw] = (nf.process_and_score(_res["articles"], MEDIA_CFG, t4_sort)
+                                    if _res["status"] == "success" and _res["articles"] else [])
+            prog.progress(1.0, "완료")
+            now_kst = datetime.now(timezone.utc) + timedelta(hours=9)
+            st.session_state["t4_results"]    = new_results
+            st.session_state["t4_clusters"]   = new_clusters
+            st.session_state["t4_last_fetch"] = now_kst
+            for _hkw in _t4_cur_kws:
+                if _hkw in st.session_state["t4_mon_history"]:
+                    st.session_state["t4_mon_history"].remove(_hkw)
+                st.session_state["t4_mon_history"].insert(0, _hkw)
+            st.session_state["t4_mon_history"] = st.session_state["t4_mon_history"][:10]
+            st.rerun()
+
+        t4_res      = st.session_state.get("t4_results", {})
+        t4_clusters = st.session_state.get("t4_clusters", {})
+
+        if not t4_clusters:
+            st.markdown("""<div class='notice-box'>
 키워드를 입력하거나 트렌드 키워드를 불러온 뒤 기사보기를 실행해 주세요.
 수집된 기사는 중복 제거 후 PR 활용 가능성이 높은 기사 중심으로 선별됩니다.
 </div>""", unsafe_allow_html=True)
-    else:
-        # ── 인사이트 자동 요약 ─────────────────────────────────────
-        _kw_cnt_map = {kw: len(cls) for kw, cls in t4_clusters.items() if cls}
-        _wl_total   = sum(1 for cls in t4_clusters.values()
-                          for cl in cls if cl["rep"].get("_in_whitelist"))
-        _all_cl     = sum(len(v) for v in t4_clusters.values())
-        _reg_cand   = sum(1 for cls in t4_clusters.values()
-                          for cl in cls if cl["rep"].get("_score", 0) >= 50)
-        if _kw_cnt_map:
-            _top_kw  = max(_kw_cnt_map, key=_kw_cnt_map.get)
-            _wl_pct  = round(_wl_total / max(_all_cl, 1) * 100)
-            _ins_parts = []
-            if len(_kw_cnt_map) > 1:
-                _ins_parts.append(f"<b>{_top_kw}</b> 관련 기사가 가장 많이 선별됐습니다 ({_kw_cnt_map[_top_kw]}건)")
-            if _wl_pct > 0:
-                _ins_parts.append(f"주요 매체 비율 <b>{_wl_pct}%</b>")
-            if _reg_cand > 0:
-                _ins_parts.append(f"PR 활용 후보 <b>{_reg_cand}건</b> 확인")
-            if _ins_parts:
-                st.markdown(f"<div class='insight-bar'>{'  ·  '.join(_ins_parts)}</div>",
-                            unsafe_allow_html=True)
+        else:
+            # 인사이트 자동 요약
+            _kw_cnt_map = {kw: len(cls) for kw, cls in t4_clusters.items() if cls}
+            _wl_total   = sum(1 for cls in t4_clusters.values()
+                              for cl in cls if cl["rep"].get("_in_whitelist"))
+            _all_cl     = sum(len(v) for v in t4_clusters.values())
+            _reg_cand   = sum(1 for cls in t4_clusters.values()
+                              for cl in cls if cl["rep"].get("_score", 0) >= 50)
+            if _kw_cnt_map:
+                _top_kw = max(_kw_cnt_map, key=_kw_cnt_map.get)
+                _wl_pct = round(_wl_total / max(_all_cl, 1) * 100)
+                _ins_parts = []
+                if len(_kw_cnt_map) > 1:
+                    _ins_parts.append(f"<b>{_top_kw}</b> 관련 기사가 가장 많이 선별됐습니다 ({_kw_cnt_map[_top_kw]}건)")
+                if _wl_pct > 0:
+                    _ins_parts.append(f"주요 매체 비율 <b>{_wl_pct}%</b>")
+                if _reg_cand > 0:
+                    _ins_parts.append(f"PR 활용 후보 <b>{_reg_cand}건</b> 확인")
+                if _ins_parts:
+                    st.markdown(f"<div class='insight-bar'>{'  ·  '.join(_ins_parts)}</div>",
+                                unsafe_allow_html=True)
 
-        STATUS_MSG = {"auth_missing":"API 키 설정 필요","auth_failed":"API 인증 실패",
-                      "rate_limit":"API 호출 한도 초과","timeout":"응답 시간 초과",
-                      "api_error":"API 오류","exception":"수집 중 오류 발생"}
+            STATUS_MSG = {"auth_missing":"API 키 설정 필요","auth_failed":"API 인증 실패",
+                          "rate_limit":"API 호출 한도 초과","timeout":"응답 시간 초과",
+                          "api_error":"API 오류","exception":"수집 중 오류 발생"}
 
-        for kw, clusters in t4_clusters.items():
-            _res    = t4_res.get(kw, {})
-            _status = _res.get("status", "")
-            _err    = _res.get("error", "")
-            cnt_str = (f"{_res.get('filtered_count',0)}건 선별" if _status == "success"
-                       else f"<span class='art-status-err'>{STATUS_MSG.get(_status, _status)}</span>")
-            st.markdown(
-                f"<div style='font-size:1rem;font-weight:800;color:#101828;padding:.8rem 0 .4rem'>"
-                f"{kw} &nbsp;<span style='font-size:13px;font-weight:400;color:#667085'>{cnt_str}</span>"
-                f"{'  · '+_err if _err else ''}</div>", unsafe_allow_html=True)
-            if not clusters:
-                if _status == "success":
-                    st.caption("해당 키워드·조건에 맞는 기사가 없습니다.")
-                continue
+            for kw, clusters in t4_clusters.items():
+                _res    = t4_res.get(kw, {})
+                _status = _res.get("status", "")
+                _err    = _res.get("error", "")
+                cnt_str = (f"{_res.get('filtered_count',0)}건 선별" if _status == "success"
+                           else f"<span class='art-status-err'>{STATUS_MSG.get(_status, _status)}</span>")
+                st.markdown(
+                    f"<div style='font-size:1rem;font-weight:800;color:#101828;padding:.8rem 0 .4rem'>"
+                    f"{kw} &nbsp;<span style='font-size:13px;font-weight:400;color:#667085'>{cnt_str}</span>"
+                    f"{'  · '+_err if _err else ''}</div>", unsafe_allow_html=True)
+                if not clusters:
+                    if _status == "success":
+                        st.caption("해당 키워드·조건에 맞는 기사가 없습니다.")
+                    continue
 
-            # 관련성 높음/보통 기사와 낮음 기사를 분리
-            main_cls = [cl for cl in clusters
-                        if cl["rep"].get("_relevance_level", "보통") != "낮음"]
-            low_cls  = [cl for cl in clusters
-                        if cl["rep"].get("_relevance_level", "보통") == "낮음"]
+                main_cls = [cl for cl in clusters
+                            if cl["rep"].get("_relevance_level", "보통") != "낮음"]
+                low_cls  = [cl for cl in clusters
+                            if cl["rep"].get("_relevance_level", "보통") == "낮음"]
 
-            for ci in range(0, len(main_cls), 2):
-                batch_cl = main_cls[ci:ci+2]
-                card_c   = st.columns(len(batch_cl), gap="medium")
-                for col, cl in zip(card_c, batch_cl):
-                    rep    = cl["rep"]
-                    others = [a for a in cl["cluster"] if a["url"] != rep["url"]]
-                    _url_base = nf.article_key(rep.get("url","") or f"no_url_{ci}")
-                    ak = hashlib.md5(f"{kw}::{ci}::{_url_base}".encode()).hexdigest()[:12]
-                    with col:
-                        with st.container(border=True):
-                            at  = rep.get("article_type", "")
-                            sc  = rep.get("_score", 0)
-                            wl  = rep.get("_in_whitelist", False)
-                            ttl = rep.get("title", "")
-                            url = rep.get("url", "")
-                            mn  = rep.get("media_name", "")
-                            dt_s= rep.get("pub_datetime", "")
-                            cls_= cl["size"]
+                for ci in range(0, len(main_cls), 2):
+                    batch_cl = main_cls[ci:ci+2]
+                    card_c   = st.columns(len(batch_cl), gap="medium")
+                    for col, cl in zip(card_c, batch_cl):
+                        rep    = cl["rep"]
+                        others = [a for a in cl["cluster"] if a["url"] != rep["url"]]
+                        _url_base = nf.article_key(rep.get("url","") or f"no_url_{ci}")
+                        # direct search prefix: manual_util_
+                        ak = make_widget_key("manual_util", f"{kw}::{ci}::{_url_base}")
+                        with col:
+                            with st.container(border=True):
+                                at  = rep.get("article_type", "")
+                                sc  = rep.get("_score", 0)
+                                wl  = rep.get("_in_whitelist", False)
+                                ttl = rep.get("title", "")
+                                url = rep.get("url", "")
+                                mn  = rep.get("media_name", "")
+                                dt_s= rep.get("pub_datetime", "")
+                                cls_= cl["size"]
 
-                            # 배지 행
-                            badges = [f"<span class='art-kw'>{rep.get('search_keyword','')}</span>"]
-                            if at:  badges.append(_art_type_html(at))
-                            if wl:  badges.append("<span class='art-media'>주요 매체</span>")
-                            badges.append(
-                                f"<span class='art-score' title='내부 참고 지표 — 키워드 관련성, 관련 보도 수, 매체 우선등급, 최신성을 종합'>"
-                                f"화제성 추정 {sc}점</span>")
-                            st.markdown(" ".join(badges), unsafe_allow_html=True)
+                                badges = [f"<span class='art-kw'>{rep.get('search_keyword','')}</span>"]
+                                if at:  badges.append(_art_type_html(at))
+                                if wl:  badges.append("<span class='art-media'>주요 매체</span>")
+                                badges.append(
+                                    f"<span class='art-score' title='내부 참고 지표 — 키워드 관련성, 관련 보도 수, 매체 우선등급, 최신성을 종합'>"
+                                    f"화제성 추정 {sc}점</span>")
+                                st.markdown(" ".join(badges), unsafe_allow_html=True)
 
-                            # SCK 관련성 배지
-                            _rl  = rep.get("_relevance_level", "")
-                            _rt  = rep.get("_relevance_type", "")
-                            _rws = rep.get("_relevance_reasons", [])
-                            _lrr = rep.get("_low_relevance_reason", "")
-                            if _rl:
-                                _rl_cls = {"높음":"rel-high","보통":"rel-mid","낮음":"rel-low"}.get(_rl,"rel-mid")
-                                _rel_html = (
-                                    f"<span class='{_rl_cls}'>SCK 관련성: {_rl}</span>"
-                                    + (f"<span class='rel-type'>{_rt}</span>" if _rt and _rt != "일반" else "")
-                                )
-                                st.markdown(_rel_html, unsafe_allow_html=True)
-                                if _rws:
-                                    st.markdown(
-                                        f"<div class='rel-why'>근거: {' · '.join(_rws[:3])}</div>",
-                                        unsafe_allow_html=True)
-
-                            # 제목
-                            if url: st.markdown(f"**[{ttl}]({url})**")
-                            else:   st.markdown(f"**{ttl}**")
-
-                            # 메타
-                            meta_parts = [p for p in [mn, dt_s] if p]
-                            cl_str = f" · 관련 보도 {cls_}건" if cls_ > 1 else ""
-                            st.markdown(f"<span class='art-meta'>{' · '.join(meta_parts)}{cl_str}</span>",
-                                        unsafe_allow_html=True)
-
-                            # 요약
-                            dsc = rep.get("description", "")
-                            if dsc:
-                                st.markdown(f"<div class='art-desc'>{dsc[:250]}</div>",
+                                _rl  = rep.get("_relevance_level", "")
+                                _rt  = rep.get("_relevance_type", "")
+                                _rws = rep.get("_relevance_reasons", [])
+                                if _rl:
+                                    _rl_cls = {"높음":"rel-high","보통":"rel-mid","낮음":"rel-low"}.get(_rl,"rel-mid")
+                                    _rel_html = (
+                                        f"<span class='{_rl_cls}'>SCK 관련성: {_rl}</span>"
+                                        + (f"<span class='rel-type'>{_rt}</span>" if _rt and _rt != "일반" else "")
+                                    )
+                                    st.markdown(_rel_html, unsafe_allow_html=True)
+                                    if _rws:
+                                        st.markdown(
+                                            f"<div class='rel-why'>근거: {' · '.join(_rws[:3])}</div>",
                                             unsafe_allow_html=True)
 
-                            # PR 활용 제안
-                            _suggest, _is_risk = _pr_suggest(at, sc, wl, ttl)
-                            _sug_cls = "art-suggest risk" if _is_risk else "art-suggest"
-                            st.markdown(f"<span class='{_sug_cls}'>💡 {_suggest}</span>",
-                                        unsafe_allow_html=True)
+                                if url: st.markdown(f"**[{ttl}]({url})**")
+                                else:   st.markdown(f"**{ttl}**")
 
-                            # 관련 보도 토글
-                            if others:
-                                show_key = f"t4_rel_{ak}"
-                                if show_key not in st.session_state:
-                                    st.session_state[show_key] = False
-                                rel_icon = "▲" if st.session_state[show_key] else "▼"
-                                if st.button(f"관련 보도 {len(others)}건 {rel_icon}",
-                                             key=f"t4_rel_btn_{ak}", type="secondary",
-                                             use_container_width=True):
-                                    st.session_state[show_key] = not st.session_state[show_key]
-                                    st.rerun()
-                                if st.session_state[show_key]:
-                                    for oa in others[:6]:
-                                        ourl=oa.get("url",""); ottl=oa.get("title","")
-                                        omn =oa.get("media_name",""); odt=oa.get("pub_date","")
-                                        st.markdown(f"• [{omn}: {ottl}]({ourl}) — {odt}" if ourl
-                                                    else f"• {omn}: {ottl} — {odt}")
+                                meta_parts = [p for p in [mn, dt_s] if p]
+                                cl_str = f" · 관련 보도 {cls_}건" if cls_ > 1 else ""
+                                st.markdown(f"<span class='art-meta'>{' · '.join(meta_parts)}{cl_str}</span>",
+                                            unsafe_allow_html=True)
 
-                            # 액션 버튼 행
-                            _ba, _bb = st.columns([1, 1])
-                            with _ba:
-                                if url: st.link_button("기사 원문", url, use_container_width=True)
-                            with _bb:
-                                _reg_open_k = f"t4_reg_open_{ak}"
-                                if _reg_open_k not in st.session_state:
-                                    st.session_state[_reg_open_k] = False
-                                if st.button("활용처 등록", key=f"t4_reg_{ak}",
-                                             use_container_width=True, type="primary"):
-                                    st.session_state[_reg_open_k] = not st.session_state[_reg_open_k]
-                                    st.rerun()
+                                dsc = rep.get("description", "")
+                                if dsc:
+                                    st.markdown(f"<div class='art-desc'>{dsc[:250]}</div>",
+                                                unsafe_allow_html=True)
 
-                            # 활용처 등록 인라인 폼
-                            if st.session_state.get(_reg_open_k, False):
-                                _sel = st.selectbox(
-                                    "활용처", NEWS_UTIL_USAGES,
-                                    key=f"t4_sel_usage_{ak}",
-                                    label_visibility="collapsed")
-                                _memo_v = st.text_input(
-                                    "메모", key=f"t4_memo_{ak}",
-                                    placeholder="관련 메모 (선택 사항)",
-                                    label_visibility="collapsed")
-                                _cs1, _cs2 = st.columns([1, 1])
-                                with _cs1:
-                                    if st.button("저장", key=f"t4_reg_save_{ak}",
-                                                 type="primary", use_container_width=True):
-                                        kw_t = rep.get("search_keyword", "")
-                                        add_news_util(ttl, url, mn,
-                                                      rep.get("pub_date",""),
-                                                      kw_t, _sel, _memo_v)
-                                        if _sel in ("PR 파이프라인 소재", "온드미디어 소재"):
-                                            ctype = "PR 기사" if "PR" in _sel else "온드미디어"
-                                            if add_content(kw_t, CURRENT_MONTH, ctype,
-                                                           ttl, url, rep.get("pub_date","")):
-                                                _inv_content(); _inv_derived()
-                                        st.session_state[_reg_open_k] = False
-                                        st.toast(f"등록됨 — {_sel}")
+                                _suggest, _is_risk = _pr_suggest(at, sc, wl, ttl)
+                                _sug_cls = "art-suggest risk" if _is_risk else "art-suggest"
+                                st.markdown(f"<span class='{_sug_cls}'>💡 {_suggest}</span>",
+                                            unsafe_allow_html=True)
+
+                                if others:
+                                    show_key = f"t4_rel_{ak}"
+                                    if show_key not in st.session_state:
+                                        st.session_state[show_key] = False
+                                    rel_icon = "▲" if st.session_state[show_key] else "▼"
+                                    if st.button(f"관련 보도 {len(others)}건 {rel_icon}",
+                                                 key=f"t4_rel_btn_{ak}", type="secondary",
+                                                 use_container_width=True):
+                                        st.session_state[show_key] = not st.session_state[show_key]
                                         st.rerun()
-                                with _cs2:
-                                    if st.button("취소", key=f"t4_reg_cancel_{ak}",
-                                                 type="secondary", use_container_width=True):
+                                    if st.session_state[show_key]:
+                                        for oa in others[:6]:
+                                            ourl=oa.get("url",""); ottl=oa.get("title","")
+                                            omn=oa.get("media_name",""); odt=oa.get("pub_date","")
+                                            st.markdown(f"• [{omn}: {ottl}]({ourl}) — {odt}" if ourl
+                                                        else f"• {omn}: {ottl} — {odt}")
+
+                                _ba, _bb = st.columns([1, 1])
+                                with _ba:
+                                    if url: st.link_button("기사 원문", url, use_container_width=True)
+                                with _bb:
+                                    _reg_open_k = f"t4_reg_open_{ak}"
+                                    if _reg_open_k not in st.session_state:
                                         st.session_state[_reg_open_k] = False
+                                    if st.button("활용처 등록", key=f"t4_reg_{ak}",
+                                                 use_container_width=True, type="primary"):
+                                        st.session_state[_reg_open_k] = not st.session_state[_reg_open_k]
                                         st.rerun()
 
-            # 관련성 낮은 기사 접이식 목록
-            if low_cls:
-                with st.expander(f"관련성 낮은 기사 {len(low_cls)}건 (펼쳐보기)"):
-                    st.caption("SCK 사업 맥락과 직접 연결되지 않아 주요 목록에서 제외된 기사입니다.")
-                    for _lcl in low_cls:
-                        _lr  = _lcl["rep"]
-                        _ltl = _lr.get("title", "")
-                        _lu  = _lr.get("url", "")
-                        _lmn = _lr.get("media_name", "")
-                        _ldt = _lr.get("pub_date", "")
-                        _lrt = _lr.get("_relevance_type", "")
-                        _lrr = _lr.get("_low_relevance_reason", "")
-                        _lsz = _lcl["size"]
-                        _meta = " · ".join(p for p in [_lmn, _ldt] if p)
-                        if _lsz > 1: _meta += f" · 관련 보도 {_lsz}건"
-                        _reason_txt = f"  ({_lrr})" if _lrr else ""
-                        st.markdown(
-                            (f"• **[{_ltl}]({_lu})**  " if _lu else f"• **{_ltl}**  ") +
-                            f"\n  <span style='font-size:11px;color:#94A3B8'>{_meta}</span>"
-                            f"<span style='font-size:11px;color:#D97706'>{_reason_txt}</span>",
-                            unsafe_allow_html=True)
+                                if st.session_state.get(_reg_open_k, False):
+                                    _sel = st.selectbox(
+                                        "활용처", NEWS_UTIL_USAGES,
+                                        key=f"t4_sel_usage_{ak}",
+                                        label_visibility="collapsed")
+                                    _memo_v = st.text_input(
+                                        "메모", key=f"t4_memo_{ak}",
+                                        placeholder="관련 메모 (선택 사항)",
+                                        label_visibility="collapsed")
+                                    _cs1, _cs2 = st.columns([1, 1])
+                                    with _cs1:
+                                        if st.button("저장", key=f"t4_reg_save_{ak}",
+                                                     type="primary", use_container_width=True):
+                                            kw_t = rep.get("search_keyword", "")
+                                            add_news_util(ttl, url, mn,
+                                                          rep.get("pub_date",""),
+                                                          kw_t, _sel, _memo_v)
+                                            if _sel in ("PR 파이프라인 소재", "온드미디어 소재"):
+                                                ctype = "PR 기사" if "PR" in _sel else "온드미디어"
+                                                if add_content(kw_t, CURRENT_MONTH, ctype,
+                                                               ttl, url, rep.get("pub_date","")):
+                                                    _inv_content(); _inv_derived()
+                                            st.session_state[_reg_open_k] = False
+                                            st.toast(f"등록됨 — {_sel}")
+                                            st.rerun()
+                                    with _cs2:
+                                        if st.button("취소", key=f"t4_reg_cancel_{ak}",
+                                                     type="secondary", use_container_width=True):
+                                            st.session_state[_reg_open_k] = False
+                                            st.rerun()
 
-            st.markdown("<hr>", unsafe_allow_html=True)
+                if low_cls:
+                    with st.expander(f"관련성 낮은 기사 {len(low_cls)}건 (펼쳐보기)"):
+                        st.caption("SCK 사업 맥락과 직접 연결되지 않아 주요 목록에서 제외된 기사입니다.")
+                        for _lcl in low_cls:
+                            _lr  = _lcl["rep"]
+                            _ltl = _lr.get("title", "")
+                            _lu  = _lr.get("url", "")
+                            _lmn = _lr.get("media_name", "")
+                            _ldt = _lr.get("pub_date", "")
+                            _lrr = _lr.get("_low_relevance_reason", "")
+                            _lsz = _lcl["size"]
+                            _meta = " · ".join(p for p in [_lmn, _ldt] if p)
+                            if _lsz > 1: _meta += f" · 관련 보도 {_lsz}건"
+                            _reason_txt = f"  ({_lrr})" if _lrr else ""
+                            st.markdown(
+                                (f"• **[{_ltl}]({_lu})**  " if _lu else f"• **{_ltl}**  ") +
+                                f"\n  <span style='font-size:11px;color:#94A3B8'>{_meta}</span>"
+                                f"<span style='font-size:11px;color:#D97706'>{_reason_txt}</span>",
+                                unsafe_allow_html=True)
+
+                st.markdown("<hr>", unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════
