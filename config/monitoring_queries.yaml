@@ -1,0 +1,76 @@
+# ════════════════════════════════════════════════════
+# SCK 자동 모니터링 검색어 설정
+# ════════════════════════════════════════════════════
+# enabled: false  →  그룹 또는 개별 검색어 비활성화
+# display_per_query 기본값은 fetch_daily_monitoring_candidates() 인자로 조정
+
+groups:
+  company:
+    enabled: true
+    queries:
+      - text: SCK
+        enabled: true
+      - text: 에쓰씨케이
+        enabled: true
+      - text: SCK Corp
+        enabled: true
+      - text: STK
+        enabled: true
+      - text: SPK
+        enabled: true
+      - text: 에쓰핀테크놀로지
+        enabled: true
+
+  competitor:
+    enabled: true
+    queries:
+      - text: 디모아
+        enabled: true
+
+  ai_ax:
+    enabled: true
+    queries:
+      - text: 기업 AI
+        enabled: true
+      - text: AI 인프라
+        enabled: true
+      - text: AI 보안
+        enabled: true
+      - text: AI 에이전트 기업
+        enabled: true
+      - text: 제조 AX
+        enabled: true
+      - text: 기업 AX
+        enabled: true
+      - text: 산업 AI
+        enabled: true
+
+  cloud_security:
+    enabled: true
+    queries:
+      - text: 기업 클라우드
+        enabled: true
+      - text: 클라우드 비용
+        enabled: true
+      - text: 클라우드 보안
+        enabled: true
+      - text: 소프트웨어 라이선스
+        enabled: true
+      - text: 사이버 공격 기업
+        enabled: true
+
+  vendor:
+    enabled: true
+    queries:
+      - text: Microsoft
+        enabled: true
+      - text: 마이크로소프트
+        enabled: true
+      - text: Adobe
+        enabled: true
+      - text: 어도비
+        enabled: true
+      - text: Autodesk
+        enabled: true
+      - text: 오토데스크
+        enabled: true
