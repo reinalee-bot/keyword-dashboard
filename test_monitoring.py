@@ -321,8 +321,8 @@ class TestScoreCandidate(unittest.TestCase):
         self.assertNotEqual(art["_monitoring_category"], "자사·관계사")
 
     def test_company_category_assigned_when_entity_present(self):
-        """제목에 SCK가 있으면 자사·관계사 카테고리가 부여된다."""
-        art = _make_scored_article("http://ex.com/f8", "SCK 파트너십 체결 소식",
+        """확정 자사 엔티티(에쓰씨케이)가 있으면 자사·관계사 카테고리가 부여된다."""
+        art = _make_scored_article("http://ex.com/f8", "에쓰씨케이 파트너십 체결 소식",
                                    group="company", query="SCK",
                                    relevance_type="자사·관계사", relevance_level="높음")
         art["_matched_groups"] = ["company"]
@@ -914,9 +914,10 @@ class TestTargetCountAndRiskCap(unittest.TestCase):
         """자사·관계사 카테고리는 target_count를 초과해 선정될 수 있다."""
         mock_mc.return_value = {}
         # 제목을 충분히 다르게 해 2차 이벤트 클러스터링에 묶이지 않게 한다
+        # 자사·관계사 확정을 위해 확정 엔티티(에쓰씨케이, SCK Corp)를 명시한다
         titles = [
-            "SCK 클라우드 인프라 구축 계약 체결",
-            "SCK 금융 고객 AX 전환 성과 발표",
+            "에쓰씨케이 클라우드 인프라 구축 계약 체결",
+            "에쓰씨케이 금융 고객 AX 전환 성과 발표",
             "에쓰씨케이 제조 부문 신규 수주 달성",
             "SCK Corp AI 도입 기업 증가 보고",
         ]
@@ -935,6 +936,72 @@ class TestTargetCountAndRiskCap(unittest.TestCase):
             1 for a in result if a["_monitoring_category"] == "자사·관계사"
         )
         self.assertGreater(company_count, 2)
+
+
+# ══════════════════════════════════════════════════════════════
+# 자사·관계사 동명이사 오탐 방지 회귀 테스트 (7개)
+# ══════════════════════════════════════════════════════════════
+
+def _make_company_art(url_suffix, title, description=""):
+    """company 그룹, 자사·관계사 관련성 타입의 테스트 기사를 만든다."""
+    art = _make_scored_article(
+        f"http://ex.com/co_{url_suffix}", title,
+        group="company", query="SCK",
+        relevance_type="자사·관계사", relevance_level="높음",
+    )
+    art["_matched_groups"] = ["company"]
+    if description:
+        art["description"] = description
+    return art
+
+
+class TestCompanyDisambiguation(unittest.TestCase):
+    """SCK vs SCK컴퍼니(스타벅스코리아) 동명이사 구분 회귀 테스트."""
+
+    def test_sck_corp_강한_엔티티_총판(self):
+        """[1] 'SCK Corp.' 확정 엔티티 포함 → 자사·관계사."""
+        art = _make_company_art("cd1", "SCK Corp. 총판 계약 체결")
+        mon.score_monitoring_candidate(art)
+        self.assertEqual(art["_monitoring_category"], "자사·관계사")
+
+    def test_에쓰씨케이_대표_선임(self):
+        """[2] '에쓰씨케이' 확정 엔티티 포함 → 자사·관계사."""
+        art = _make_company_art("cd2", "에쓰씨케이 대표이사 신규 선임")
+        mon.score_monitoring_candidate(art)
+        self.assertEqual(art["_monitoring_category"], "자사·관계사")
+
+    def test_sck컴퍼니_스타벅스_노조_is_not_company(self):
+        """[3] 'SCK컴퍼니 스타벅스 노조' → 동명이사 제외 → 자사 아님."""
+        art = _make_company_art("cd3", "SCK컴퍼니 스타벅스 노조 출범")
+        mon.score_monitoring_candidate(art)
+        self.assertNotEqual(art["_monitoring_category"], "자사·관계사")
+
+    def test_sck컴퍼니_실적_is_not_company(self):
+        """[4] 'SCK컴퍼니 실적' → 동명이사 제외 → 자사 아님."""
+        art = _make_company_art("cd4", "SCK컴퍼니 실적 발표 적자 전환")
+        mon.score_monitoring_candidate(art)
+        self.assertNotEqual(art["_monitoring_category"], "자사·관계사")
+
+    def test_이마트_계열사_sck컴퍼니_is_not_company(self):
+        """[5] '이마트 계열사 SCK컴퍼니' → 동명이사 제외 → 자사 아님."""
+        art = _make_company_art("cd5", "이마트 계열사 SCK컴퍼니 현황")
+        mon.score_monitoring_candidate(art)
+        self.assertNotEqual(art["_monitoring_category"], "자사·관계사")
+
+    def test_bare_sck_보조신호_없음_not_confirmed(self):
+        """[6] bare 'SCK' + 당사 사업 보조 신호 없음 → 자사 확정 금지."""
+        art = _make_company_art("cd6", "SCK 관련 뉴스 동향",
+                                description="기업 전반의 동향을 살펴본다.")
+        mon.score_monitoring_candidate(art)
+        self.assertNotEqual(art["_monitoring_category"], "자사·관계사")
+
+    def test_bare_sck_with_microsoft_총판_is_company_candidate(self):
+        """[7] bare 'SCK' + Microsoft 총판 보조 신호 → 자사 후보 인정."""
+        art = _make_company_art(
+            "cd7", "SCK, Microsoft 소프트웨어 라이선스 총판 계약 체결"
+        )
+        mon.score_monitoring_candidate(art)
+        self.assertEqual(art["_monitoring_category"], "자사·관계사")
 
 
 # ══════════════════════════════════════════════════════════════

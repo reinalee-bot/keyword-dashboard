@@ -41,7 +41,23 @@ from news_fetcher import (
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config", "monitoring_queries.yaml")
 
-# 자사 엔티티 목록 (제목/설명 직접 언급 확인용)
+# 자사 엔티티 — 목적별로 구분
+# (1) 확정 자사 엔티티: 단독으로 자사 확정 가능
+_COMPANY_STRONG_ENTITIES = [
+    "에쓰씨케이", "sck corp", "stk", "spk", "에쓰핀테크놀로지",
+]
+# (2) 동명이사 제외 패턴: bare 'SCK'가 이 문맥에 있으면 당사 기사 아님
+_COMPANY_BLOCKLIST = frozenset([
+    "sck컴퍼니", "스타벅스코리아", "스타벅스 코리아",
+    "스타벅스", "신세계", "이마트",
+])
+# (3) bare 'SCK' + 보조 신호 → 자사 후보 (두 조건 동시 충족 필요)
+_COMPANY_AUX_SIGNALS = [
+    "microsoft", "마이크로소프트", "adobe", "어도비", "autodesk", "오토데스크",
+    "sck corp", "총판", "리셀러", "공식 파트너",
+    "소프트웨어 라이선스", "sw 라이선스", "it 솔루션",
+]
+# (4) _is_vendor_mention_only() 등 기존 엔티티 체크용 (변경 없음)
 _COMPANY_ENTITIES  = ["SCK", "에쓰씨케이", "SCK Corp", "STK", "SPK", "에쓰핀테크놀로지"]
 _COMPETITOR_ENTITIES = ["디모아"]
 
@@ -110,18 +126,24 @@ def _classify_monitoring_risk(article: dict) -> str:
     """
     리스크 기사를 세분류한다.
     Returns: "urgent_incident" | "security_trend" | "not_risk"
+
+    긴급 리스크 판정은 제목에 사건 시그널이 있어야 한다.
+    description에만 위협 단어가 있으면 분석·전망 기사일 가능성이 높으므로
+    security_trend로 처리한다.
     """
     if article.get("_relevance_type", "") != "리스크":
         return "not_risk"
     atype = article.get("article_type", "")
     if atype in _NON_INCIDENT_ARTICLE_TYPES:
         return "not_risk"
-    text = (article.get("title", "") + " " + article.get("description", "")).lower()
+    full_text  = (article.get("title", "") + " " + article.get("description", "")).lower()
+    title_text = article.get("title", "").lower()
     for sig in _NON_INCIDENT_SIGNALS:
-        if sig in text:
+        if sig in full_text:
             return "not_risk"
+    # 제목에 실제 사건 시그널이 있어야만 urgent_incident
     for sig in _INCIDENT_SIGNALS:
-        if sig in text:
+        if sig in title_text:
             return "urgent_incident"
     return "security_trend"
 
@@ -383,6 +405,26 @@ def _get_vendor_name(article: dict):
     return None
 
 
+def _is_our_company_mention(text: str) -> bool:
+    """
+    텍스트가 당사(SCK Corp.) 기사인지 동명이사를 제외하고 판단한다.
+    - 확정 엔티티(에쓰씨케이, SCK Corp 등)가 있으면 자사로 확정한다.
+    - 동명이사 문맥(SCK컴퍼니, 스타벅스코리아 등)이 있으면 제외한다.
+    - bare 'SCK'는 당사 사업 보조 신호(총판, Microsoft 등)가 함께 있어야 자사 후보로 인정한다.
+    """
+    # 1. 확정 자사 엔티티 → 자사 (blocklist 무관)
+    if any(s in text for s in _COMPANY_STRONG_ENTITIES):
+        return True
+    # 2. 동명이사 문맥 → 자사 아님
+    if any(b in text for b in _COMPANY_BLOCKLIST):
+        return False
+    # 3. bare 'sck' + 당사 사업 보조 신호 → 자사 후보
+    if "sck" in text and any(a in text for a in _COMPANY_AUX_SIGNALS):
+        return True
+    # 4. bare 'sck' 단독, 보조 신호 없음 → 자사 확정 금지
+    return False
+
+
 def _determine_category(article: dict) -> str:
     """카테고리 우선순위 사다리에 따라 _monitoring_category를 결정한다."""
     rtype  = article.get("_relevance_type", "일반")
@@ -398,7 +440,7 @@ def _determine_category(article: dict) -> str:
         # not_risk → 다른 카테고리로 낙하
 
     if rtype == "자사·관계사" or "company" in groups:
-        if any(e.lower() in text for e in _COMPANY_ENTITIES):
+        if _is_our_company_mention(text):
             return "자사·관계사"
 
     if rtype == "경쟁사" or "competitor" in groups:
@@ -633,6 +675,12 @@ def select_daily_monitoring_articles(
         level   = art.get("_relevance_level", "낮음")
         cat     = art.get("_monitoring_category", "기타")
         is_risk = art.get("_is_risk_priority", False)
+        rtype   = art.get("_relevance_type", "")
+
+        # 관련성 스코어러가 자사·관계사로 분류했지만 동명이사 판별에서 탈락한 기사 제외
+        art_text = (art.get("title", "") + " " + art.get("description", "")).lower()
+        if rtype == "자사·관계사" and not _is_our_company_mention(art_text):
+            continue
 
         if level in {"높음", "보통"}:
             eligible.append(art)
