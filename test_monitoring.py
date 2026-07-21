@@ -1,5 +1,5 @@
 """
-fetch_daily_monitoring_candidates() 단위 테스트
+모니터링 모듈 단위·통합 테스트
 네트워크 호출은 unittest.mock으로 처리한다.
 실행: python test_monitoring.py
 """
@@ -531,6 +531,174 @@ class TestFetchCandidates2(unittest.TestCase):
         mg = results[0]["_matched_groups"]
         self.assertIn("company",    mg)
         self.assertIn("competitor", mg)
+
+
+# ══════════════════════════════════════════════════════════════
+# 통합 테스트 — 실제 cluster_articles / calculate_article_score / score_relevance 연결
+# ══════════════════════════════════════════════════════════════
+
+def _make_candidate(url, title, group, query,
+                    matched_queries=None, matched_groups=None,
+                    relevance_score=65, relevance_level="높음",
+                    relevance_type="시장동향", article_type="일반 기사",
+                    media_name="테스트매체", media_tier=3):
+    """select_daily_monitoring_articles()에 직접 전달할 후보 기사 (fetch 단계 이후 상태)."""
+    return {
+        "title":               title,
+        "description":         "기업 AI 인프라 관련 본문 내용",
+        "url":                 url,
+        "domain":              "test.com",
+        "media_name":          media_name,
+        "pub_date":            "2026-07-21",
+        "pub_datetime":        "2026-07-21 10:00",
+        "_dt":                 datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc),
+        "_media_tier":         media_tier,
+        "_in_whitelist":       False,
+        "search_keyword":      query,
+        "article_type":        article_type,
+        "_multi_kw_count":     1,
+        "_kw_title_score":     1,
+        "_filter_reason":      "",
+        "_relevance_score":    relevance_score,
+        "_relevance_level":    relevance_level,
+        "_relevance_type":     relevance_type,
+        "_relevance_reasons":  ["검색 주제 제목 포함"],
+        "_low_relevance_reason": "",
+        "_foreign_language":   False,
+        "_monitoring_group":   group,
+        "_source_query":       query,
+        "_matched_queries":    matched_queries if matched_queries is not None else [f"{group}/{query}"],
+        "_matched_groups":     matched_groups if matched_groups is not None else [group],
+    }
+
+
+class TestMonitoringIntegration(unittest.TestCase):
+    """실제 cluster_articles / calculate_article_score / score_relevance 연결 통합 테스트"""
+
+    def test_score_field_set_by_real_cluster_scoring(self):
+        """select_daily_monitoring_articles() 후 score가 실제 calculate_article_score 값으로 설정된다."""
+        art = _make_candidate(
+            "http://ex.com/int1", "기업 AI 인프라 구축 현황 보도",
+            "ai_ax", "기업 AI", media_tier=2,
+        )
+        with patch("monitoring.load_media_config", return_value={}):
+            result = mon.select_daily_monitoring_articles([art])
+        self.assertEqual(len(result), 1)
+        self.assertIn("score", result[0])
+        # tier 2 → 매체 점수 15, 최신성 점수 ≥5 → score ≥ 20
+        self.assertGreater(result[0]["score"], 0)
+
+    def test_cluster_rep_single_returned_for_similar_titles(self):
+        """유사 제목 3건은 cluster_articles()에 의해 대표 1건만 반환된다."""
+        # 제목 유사도 ≥0.75 (80~90% 대) — 같은 제목의 다른 URL 기사
+        same = "기업 AI 인프라 구축 활용 사례 현황"
+        arts = [
+            _make_candidate(f"http://ex.com/cl{i}", same,
+                            "ai_ax", "기업 AI", media_name=f"매체{i}")
+            for i in range(3)
+        ]
+        with patch("monitoring.load_media_config", return_value={}):
+            result = mon.select_daily_monitoring_articles(arts)
+        self.assertEqual(len(result), 1)
+
+    def test_cluster_matched_queries_fully_merged(self):
+        """클러스터로 묶인 3건의 _matched_queries가 대표 기사에 모두 병합된다."""
+        same = "기업 AI 인프라 구축 활용 사례 현황"
+        a = _make_candidate("http://ex.com/mq1", same, "ai_ax", "기업 AI",
+                            matched_queries=["ai_ax/기업 AI"],    matched_groups=["ai_ax"])
+        b = _make_candidate("http://ex.com/mq2", same, "ai_ax", "AI 인프라",
+                            matched_queries=["ai_ax/AI 인프라"],  matched_groups=["ai_ax"])
+        c = _make_candidate("http://ex.com/mq3", same, "vendor", "Microsoft",
+                            matched_queries=["vendor/Microsoft"], matched_groups=["vendor"])
+        with patch("monitoring.load_media_config", return_value={}):
+            result = mon.select_daily_monitoring_articles([a, b, c])
+        self.assertEqual(len(result), 1)
+        mq = result[0]["_matched_queries"]
+        self.assertIn("ai_ax/기업 AI",    mq)
+        self.assertIn("ai_ax/AI 인프라",  mq)
+        self.assertIn("vendor/Microsoft", mq)
+
+    def test_cluster_matched_groups_fully_merged(self):
+        """클러스터로 묶인 3건의 _matched_groups가 대표 기사에 모두 병합된다."""
+        same = "기업 AI 인프라 구축 활용 사례 현황"
+        a = _make_candidate("http://ex.com/mg1", same, "ai_ax",  "기업 AI",
+                            matched_groups=["ai_ax"])
+        b = _make_candidate("http://ex.com/mg2", same, "ai_ax",  "AI 인프라",
+                            matched_groups=["ai_ax"])
+        c = _make_candidate("http://ex.com/mg3", same, "vendor", "Microsoft",
+                            matched_groups=["vendor"])
+        with patch("monitoring.load_media_config", return_value={}):
+            result = mon.select_daily_monitoring_articles([a, b, c])
+        self.assertEqual(len(result), 1)
+        mg = result[0]["_matched_groups"]
+        self.assertIn("ai_ax",  mg)
+        self.assertIn("vendor", mg)
+
+    def test_cluster_size_reflected_in_buzz(self):
+        """클러스터 크기 3이 화제성 점수(확산도 항목)에 반영된다."""
+        same = "기업 AI 인프라 구축 활용 사례 현황"
+        arts = [
+            _make_candidate(f"http://ex.com/sz{i}", same,
+                            "ai_ax", "기업 AI", media_name=f"매체{i}")
+            for i in range(3)
+        ]
+        with patch("monitoring.load_media_config", return_value={}):
+            result = mon.select_daily_monitoring_articles(arts)
+        self.assertEqual(len(result), 1)
+        # 클러스터 크기 3 → 확산도 min((3-1)*2.8, 25) = 5 → score ≥ 5
+        self.assertGreaterEqual(result[0]["score"], 5)
+
+    def test_real_risk_detection_from_relevance_scorer(self):
+        """score_relevance()가 기업 해킹·유출 기사를 '리스크' 타입으로 판정하면 _is_risk_priority=True."""
+        from relevance_scorer import score_relevance
+        rel = score_relevance(
+            title="클라우드 서비스 해킹으로 고객 데이터 유출",
+            description="국내 기업의 클라우드 시스템이 해킹 공격을 받아 고객 개인정보가 유출됐다. 피해 규모가 확산되고 있다.",
+            query_keyword="사이버 공격 기업",
+        )
+        self.assertEqual(rel["_relevance_type"], "리스크",
+                         "score_relevance가 해킹·유출 기사를 리스크로 판정해야 한다")
+        rel["_matched_queries"] = ["cloud_security/사이버 공격 기업"]
+        rel["_matched_groups"]  = ["cloud_security"]
+        rel["score"] = 50
+        mon.score_monitoring_candidate(rel)
+        self.assertTrue(rel["_is_risk_priority"])
+
+    def test_disabled_person_context_not_risk(self):
+        """장애인 맥락 기사는 score_relevance()가 리스크로 판정하지 않으며 _is_risk_priority=False."""
+        from relevance_scorer import score_relevance
+        rel = score_relevance(
+            title="장애인 고용 의무 이행 기업 지원 정책 발표",
+            description="정부가 장애인 고용 의무 이행 기업에 대한 지원 제도를 강화한다고 밝혔다.",
+            query_keyword="사이버 공격 기업",
+        )
+        self.assertNotEqual(rel["_relevance_type"], "리스크",
+                            "장애인 기사는 리스크 타입이 되면 안 된다")
+        rel["_matched_queries"] = ["cloud_security/사이버 공격 기업"]
+        rel["_matched_groups"]  = ["cloud_security"]
+        rel["score"] = 50
+        mon.score_monitoring_candidate(rel)
+        self.assertFalse(rel["_is_risk_priority"])
+
+    def test_full_pipeline_fields_complete(self):
+        """select_daily_monitoring_articles() 반환 기사에 2단계 필드가 모두 존재한다."""
+        art = _make_candidate(
+            "http://ex.com/full1", "기업 AI 솔루션 도입 확산",
+            "ai_ax", "기업 AI",
+        )
+        with patch("monitoring.load_media_config", return_value={}):
+            result = mon.select_daily_monitoring_articles([art])
+        self.assertEqual(len(result), 1)
+        r = result[0]
+        for field in ("score", "_pr_value_score", "_monitoring_priority",
+                      "_is_risk_priority", "_monitoring_category", "_monitoring_reason"):
+            self.assertIn(field, r, f"누락 필드: {field}")
+        # score(buzz)가 공식에 실제로 반영됐는지 확인
+        pr = r["_pr_value_score"]
+        rscore = r["_relevance_score"]
+        buzz   = r["score"]
+        expected = max(0, min(100, round(rscore * 0.45 + buzz * 0.30 + pr * 0.25)))
+        self.assertEqual(r["_monitoring_priority"], expected)
 
 
 # ══════════════════════════════════════════════════════════════
