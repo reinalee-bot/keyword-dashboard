@@ -50,3 +50,25 @@ def make_widget_key(prefix: str, url: str) -> str:
     prefix로 자동 모니터링('monitoring_util')과 직접 검색('manual_util')을 구분한다.
     """
     return f"{prefix}_{hashlib.md5(url.encode()).hexdigest()[:12]}"
+
+
+def apply_urgency_filter(ranked: list, risk_only: bool = False) -> list:
+    """
+    긴급 리스크 필터를 적용한다.
+    risk_only=True이면 _is_risk_priority=True인 기사만 반환한다.
+    """
+    if not risk_only:
+        return ranked
+    return [(rank, art) for rank, art in ranked
+            if art.get("_is_risk_priority", False)]
+
+
+def sort_monitoring_articles(ranked: list, sort_by: str = "우선순위순") -> list:
+    """
+    정렬 기준에 따라 기사 목록을 재정렬한다.
+    - '우선순위순': monitoring.py 선정 순서(rank) 유지
+    - 'PR 활용도순': _pr_value_score 내림차순
+    """
+    if sort_by == "PR 활용도순":
+        return sorted(ranked, key=lambda x: x[1].get("_pr_value_score", 0), reverse=True)
+    return sorted(ranked, key=lambda x: x[0])

@@ -6,6 +6,8 @@ SCK 관련성 판정 회귀 테스트 (31개)
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # lru_cache 초기화 (재로드 없이 YAML 변경 반영)
 import relevance_scorer as rs

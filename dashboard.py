@@ -18,6 +18,7 @@ import monitoring as mon
 from monitoring_tab_helpers import (
     today_kst, monitoring_config_version,
     apply_category_filter, count_by_category, make_widget_key,
+    apply_urgency_filter, sort_monitoring_articles,
 )
 
 # ── 상수 ──────────────────────────────────────────────────
@@ -1377,7 +1378,8 @@ with tab4:
     for _k, _v in [("t4_results", {}), ("t4_last_fetch", None),
                    ("t4_clusters", {}), ("t4_mon_kws", []),
                    ("t4_mon_history", []), ("mon_refresh_token", 0),
-                   ("mon_cat_filter", "전체")]:
+                   ("mon_cat_filter", "전체"),
+                   ("mon_risk_only", False), ("mon_sort_by", "우선순위순")]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
@@ -1388,10 +1390,10 @@ with tab4:
             return True
         return False
 
-    def _pr_suggest(article_type, score, in_whitelist, title=""):
-        RISK_TERMS = ["리스크","취약","사고","침해","유출","위협","해킹","랜섬","피해"]
-        if any(t in title for t in RISK_TERMS):
-            return ("리스크 이슈 여부 확인 필요", True)
+    def _pr_suggest(article_type, score, in_whitelist, title="", is_risk_priority=False):
+        # monitoring.py의 urgent_incident 판정을 단일 기준으로 사용
+        if is_risk_priority:
+            return ("긴급 보안 이슈 — 즉시 내용 확인 및 대응 검토 필요", True)
         if article_type == "보도자료형" and score >= 60:
             return ("현업 확인 후 PR 파이프라인 등록 권장", False)
         if article_type == "기획·분석":
@@ -1470,8 +1472,28 @@ with tab4:
         if _cat_active != st.session_state["mon_cat_filter"]:
             st.session_state["mon_cat_filter"] = _cat_active
 
+        # ── 긴급 리스크 필터 + 정렬 ─────────────────────────
+        _frow1, _frow2 = st.columns([6, 4])
+        with _frow1:
+            _risk_only_val = st.checkbox(
+                "🚨 긴급 리스크만 보기", key="mon_risk_only_chk",
+                value=st.session_state.get("mon_risk_only", False))
+            if _risk_only_val != st.session_state["mon_risk_only"]:
+                st.session_state["mon_risk_only"] = _risk_only_val
+        with _frow2:
+            _sort_opts = ["우선순위순", "PR 활용도순"]
+            _sort_cur  = st.session_state.get("mon_sort_by", "우선순위순")
+            _sort_sel  = st.radio(
+                "정렬", _sort_opts, horizontal=True,
+                index=(_sort_opts.index(_sort_cur) if _sort_cur in _sort_opts else 0),
+                key="mon_sort_radio", label_visibility="collapsed")
+            if _sort_sel != st.session_state["mon_sort_by"]:
+                st.session_state["mon_sort_by"] = _sort_sel
+
         # ── 기사 카드 ─────────────────────────────────────
         _ranked = apply_category_filter(_mon_selected, _cat_active)
+        _ranked = apply_urgency_filter(_ranked, st.session_state.get("mon_risk_only", False))
+        _ranked = sort_monitoring_articles(_ranked, st.session_state.get("mon_sort_by", "우선순위순"))
 
         if not _ranked:
             st.caption("해당 카테고리에 선정된 기사가 없습니다.")
@@ -1487,34 +1509,45 @@ with tab4:
                 "기타":         ("#F1F5F9","#475569"),
             }
             for _rank, _art in _ranked:
-                _mon_url  = _art.get("url", "")
-                _mon_ak   = make_widget_key("monitoring_util", _mon_url or f"no_url_{_rank}")
-                _mon_ttl  = _art.get("title", "")
-                _mon_mn   = _art.get("media_name", "")
-                _mon_dt   = _art.get("pub_datetime", "")
-                _mon_at   = _art.get("article_type", "")
-                _mon_cat  = _art.get("_monitoring_category", "기타")
-                _mon_rl   = _art.get("_relevance_level", "")
-                _mon_rws  = _art.get("_relevance_reasons", [])
-                _mon_why  = _art.get("_monitoring_reason", "")
-                _mon_sc   = _art.get("score", 0)
-                _mon_wl   = _art.get("_in_whitelist", False)
-                _mon_pri  = _art.get("_monitoring_priority", 0)
-                _mon_prscore = _art.get("_pr_value_score", 0)
-                _mon_rsc  = _art.get("_relevance_score", 0)
-                _mon_mqs  = _art.get("_matched_queries", [])
-                _mon_mgs  = _art.get("_matched_groups", [])
+                _mon_url     = _art.get("url", "")
+                _mon_ak      = make_widget_key("monitoring_util", _mon_url or f"no_url_{_rank}")
+                _mon_ttl     = _art.get("title", "") or ""
+                _mon_mn      = _art.get("media_name", "") or ""
+                _mon_dt      = _art.get("pub_datetime", "") or ""
+                _mon_at      = _art.get("article_type", "") or ""
+                _mon_cat     = _art.get("_monitoring_category", "기타") or "기타"
+                _mon_rl      = _art.get("_relevance_level", "") or ""
+                _mon_rws     = _art.get("_relevance_reasons", []) or []
+                _mon_why     = _art.get("_monitoring_reason", "") or ""
+                _mon_sc      = _art.get("score", 0) or 0
+                _mon_wl      = _art.get("_in_whitelist", False)
+                _mon_pri     = _art.get("_monitoring_priority", 0) or 0
+                _mon_prscore = _art.get("_pr_value_score", 0) or 0
+                _mon_rsc     = _art.get("_relevance_score", 0) or 0
+                _mon_mqs     = _art.get("_matched_queries", []) or []
+                _mon_mgs     = _art.get("_matched_groups", []) or []
+                _mon_is_risk = _art.get("_is_risk_priority", False)
 
-                _cat_bg, _cat_fg = _CAT_STYLE.get(_mon_cat, ("#F1F5F9","#475569"))
+                # 긴급 리스크는 붉은 배지, 일반 보안 트렌드는 기존 앰버색 유지
+                _base_cat_bg, _base_cat_fg = _CAT_STYLE.get(_mon_cat, ("#F1F5F9","#475569"))
+                if _mon_cat == "리스크" and _mon_is_risk:
+                    _cat_bg, _cat_fg = "#FEE2E2", "#991B1B"
+                else:
+                    _cat_bg, _cat_fg = _base_cat_bg, _base_cat_fg
                 _rl_cls = {"높음":"rel-high","보통":"rel-mid","낮음":"rel-low"}.get(_mon_rl,"rel-mid")
 
                 with st.container(border=True):
-                    # 순위 + 카테고리 + 관련성 배지 행
+                    # 순위 + 카테고리 + 긴급 배지 + 관련성 배지 행
                     _badge_parts = [
                         f"<span style='font-size:13px;font-weight:800;color:#102A43'>#{_rank}</span>",
                         f"<span style='display:inline-block;background:{_cat_bg};color:{_cat_fg};"
                         f"border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700'>{_mon_cat}</span>",
                     ]
+                    if _mon_is_risk:
+                        _badge_parts.append(
+                            "<span style='display:inline-block;background:#DC2626;color:#fff;"
+                            "border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700'>"
+                            "🚨 긴급</span>")
                     if _mon_rl in ("높음", "보통"):
                         _badge_parts.append(f"<span class='{_rl_cls}'>관련성 {_mon_rl}</span>")
                     st.markdown(" ".join(_badge_parts), unsafe_allow_html=True)
@@ -1523,13 +1556,18 @@ with tab4:
                     if _mon_url:
                         st.markdown(f"**[{_mon_ttl}]({_mon_url})**")
                     else:
-                        st.markdown(f"**{_mon_ttl}**")
+                        st.markdown(f"**{_mon_ttl or '(제목 없음)'}**")
 
-                    # 메타 (매체 · 발행시간)
+                    # 메타 (매체 · 발행시간 · 점수 요약)
                     _meta_parts = [p for p in [_mon_mn, _mon_dt] if p]
                     if _meta_parts:
                         st.markdown(f"<span class='art-meta'>{' · '.join(_meta_parts)}</span>",
                                     unsafe_allow_html=True)
+                    st.markdown(
+                        f"<span class='art-meta' style='font-size:11.5px'>"
+                        f"뉴스중요도 <b>{_mon_sc}</b> &nbsp;·&nbsp; PR활용도 <b>{_mon_prscore}</b>"
+                        f"</span>",
+                        unsafe_allow_html=True)
 
                     # 선정 이유
                     if _mon_why:
@@ -1538,8 +1576,9 @@ with tab4:
                             f"📌 {_mon_why}</div>",
                             unsafe_allow_html=True)
 
-                    # PR 활용 제안
-                    _sug, _is_risk_sug = _pr_suggest(_mon_at, _mon_sc, _mon_wl, _mon_ttl)
+                    # PR 활용 제안 (monitoring.py _is_risk_priority를 단일 기준으로 사용)
+                    _sug, _is_risk_sug = _pr_suggest(
+                        _mon_at, _mon_sc, _mon_wl, _mon_ttl, _mon_is_risk)
                     _sug_cls = "art-suggest risk" if _is_risk_sug else "art-suggest"
                     st.markdown(f"<span class='{_sug_cls}'>💡 {_sug}</span>",
                                 unsafe_allow_html=True)
