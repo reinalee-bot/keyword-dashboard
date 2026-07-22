@@ -1630,6 +1630,19 @@ with tab4:
                         )
                         st.markdown(_axis_html, unsafe_allow_html=True)
 
+                        # 본문 미확보 / 판정 신뢰도 안내
+                        _confidence_note = ""
+                        if _mon_cat == "기획기사 후보" and _mon_rl in ("보통", "낮음"):
+                            _confidence_note = "⚠️ 판정 신뢰도 낮음 — 제목·요약만으로 분류됨"
+                        elif _mon_cat == "기획기사 후보":
+                            _confidence_note = "ℹ️ 본문 미확보 — 제목·요약 기반 분류"
+                        if _confidence_note:
+                            st.markdown(
+                                f"<div style='font-size:11px;color:#92400E;background:#FEF3C7;"
+                                f"padding:3px 7px;border-radius:4px;margin:3px 0'>"
+                                f"{_confidence_note}</div>",
+                                unsafe_allow_html=True)
+
                         st.markdown(
                             f"<span class='art-meta' style='font-size:11.5px'>"
                             f"뉴스중요도 <b>{_mon_sc}</b> &nbsp;·&nbsp; PR활용도 <b>{_mon_prscore}</b>"
