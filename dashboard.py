@@ -1630,17 +1630,19 @@ with tab4:
                         )
                         st.markdown(_axis_html, unsafe_allow_html=True)
 
-                        # 본문 미확보 / 판정 신뢰도 안내
-                        _confidence_note = ""
-                        if _mon_cat == "기획기사 후보" and _mon_rl in ("보통", "낮음"):
-                            _confidence_note = "⚠️ 판정 신뢰도 낮음 — 제목·요약만으로 분류됨"
-                        elif _mon_cat == "기획기사 후보":
-                            _confidence_note = "ℹ️ 본문 미확보 — 제목·요약 기반 분류"
-                        if _confidence_note:
+                        # 판정 신뢰도 (콘텐츠 기반 — SCK 관련성과 무관)
+                        _confidence = _mon_art.get("_confidence", "")
+                        if _confidence:
+                            _conf_color = {"높음": "#166534", "보통": "#92400E", "낮음": "#991B1B"}
+                            _conf_bg    = {"높음": "#DCFCE7", "보통": "#FEF3C7", "낮음": "#FEE2E2"}
+                            _conf_icon  = {"높음": "✅", "보통": "ℹ️", "낮음": "⚠️"}
+                            _conf_note  = {"높음": "본문 미확보 — 제목·요약 기반 분류 (콘텐츠 충분)",
+                                           "보통": "본문 미확보 — 제목·요약 기반 분류 (콘텐츠 보통)",
+                                           "낮음": "본문 미확보 — 제목·요약만 확보 (판정 신뢰도 낮음)"}
                             st.markdown(
-                                f"<div style='font-size:11px;color:#92400E;background:#FEF3C7;"
-                                f"padding:3px 7px;border-radius:4px;margin:3px 0'>"
-                                f"{_confidence_note}</div>",
+                                f"<div style='font-size:11px;color:{_conf_color.get(_confidence,\"#374151\")};background:{_conf_bg.get(_confidence,\"#F3F4F6\")};padding:3px 7px;border-radius:4px;margin:3px 0'>"
+                                f"{_conf_icon.get(_confidence,'')} 판정 신뢰도 <b>{_confidence}</b> — {_conf_note.get(_confidence,'')}"
+                                f"</div>",
                                 unsafe_allow_html=True)
 
                         st.markdown(
@@ -1664,19 +1666,80 @@ with tab4:
                         st.markdown(f"<span class='{_sug_cls}'>💡 {_sug}</span>",
                                     unsafe_allow_html=True)
 
-                        # 판정 근거 (expander)
-                        with st.expander("판정 근거 보기"):
+                        # 판정 근거 (expander) — 9축 세부 점수 포함
+                        with st.expander("판정 근거 및 세부 점수 보기"):
                             _dc1, _dc2 = st.columns(2)
                             with _dc1:
                                 st.markdown(f"**모니터링 우선순위**: {_mon_pri}")
-                                st.markdown(f"**SCK 관련성**: {_mon_rsc}")
                                 st.markdown(f"**뉴스 중요도**: {_mon_sc}")
-                                st.markdown(f"**PR 활용도**: {_mon_prscore}")
+                                st.markdown(f"**PR 활용도(합계)**: {_mon_prscore}")
+                                st.markdown(f"**판정 신뢰도**: {_confidence or '—'}")
                             with _dc2:
                                 st.markdown(f"**수집 검색어**: {', '.join(_mon_mqs) if _mon_mqs else '—'}")
                                 st.markdown(f"**수집 영역**: {', '.join(_mon_mgs) if _mon_mgs else '—'}")
                                 if _mon_rws:
                                     st.markdown(f"**판정 근거**: {' · '.join(_mon_rws[:3])}")
+                            # 9축 세부 점수 표시
+                            _axes = _mon_art.get("_score_axes")
+                            if _axes:
+                                st.markdown("**세부 점수 (9평가축)**")
+                                _ax_rows = [
+                                    ("① SCK 사업 관련성", _axes.get("sck_relevance", 0), 25),
+                                    ("② 산업 인사이트",   _axes.get("industry_insight", 0), 25),
+                                    ("③ 근거 구체성",     _axes.get("evidence_quality", 0), 20),
+                                    ("④ PR 기획 확장성",  _axes.get("pr_expandability", 0), 15),
+                                    ("⑤ 기사 품질·객관성",_axes.get("article_quality", 0), 10),
+                                    ("⑥ 최신성",         _axes.get("recency", 0), 5),
+                                ]
+                                _ax_html = "<table style='font-size:11px;width:100%;border-collapse:collapse'>"
+                                for _ax_name, _ax_val, _ax_max in _ax_rows:
+                                    _ax_pct = int(_ax_val / _ax_max * 100) if _ax_max else 0
+                                    _ax_html += (
+                                        f"<tr><td style='padding:1px 4px;width:45%'>{_ax_name}</td>"
+                                        f"<td style='width:30px;text-align:right'><b>{_ax_val}</b>/{_ax_max}</td>"
+                                        f"<td style='padding:0 6px;width:60%'>"
+                                        f"<div style='background:#E5E7EB;border-radius:3px;height:8px'>"
+                                        f"<div style='background:#3B82F6;width:{_ax_pct}%;height:8px;border-radius:3px'></div>"
+                                        f"</div></td></tr>"
+                                    )
+                                # 감점 행
+                                _ded_pr  = _axes.get("deduct_pr", 0)
+                                _ded_ctx = _axes.get("deduct_context", 0)
+                                _ded_dup = _axes.get("deduct_duplicate", 0)
+                                if _ded_pr or _ded_ctx or _ded_dup:
+                                    _ax_html += f"<tr><td colspan='3' style='padding-top:4px;font-weight:bold'>감점</td></tr>"
+                                    if _ded_pr:  _ax_html += f"<tr><td style='padding:1px 4px;color:#DC2626'>보도자료성</td><td style='color:#DC2626;text-align:right'>{_ded_pr}</td><td></td></tr>"
+                                    if _ded_ctx: _ax_html += f"<tr><td style='padding:1px 4px;color:#DC2626'>문맥 관련성 부족</td><td style='color:#DC2626;text-align:right'>{_ded_ctx}</td><td></td></tr>"
+                                    if _ded_dup: _ax_html += f"<tr><td style='padding:1px 4px;color:#DC2626'>중복·홍보성</td><td style='color:#DC2626;text-align:right'>{_ded_dup}</td><td></td></tr>"
+                                _ax_html += "</table>"
+                                st.markdown(_ax_html, unsafe_allow_html=True)
+                            # 품질 요소 판정
+                            _qf = _mon_art.get("_quality_factors")
+                            if _qf:
+                                _qf_labels = {
+                                    "industry_change":  "변화·현상 감지",
+                                    "cause_background": "원인·배경 포함",
+                                    "business_impact":  "기업 영향 언급",
+                                    "data_statistics":  "수치·통계 존재★",
+                                    "multiple_cases":   "복수 사례",
+                                    "expert_source":    "전문가·외부 근거",
+                                    "pr_expandability": "기획 확장 가능성",
+                                    "is_promotional":   "홍보·보도자료 중심★",
+                                }
+                                _qf_parts = []
+                                for _qk, _qlabel in _qf_labels.items():
+                                    _qv = _qf.get(_qk)
+                                    if _qv is None:
+                                        _qf_parts.append(f"<span style='color:#9CA3AF'>{_qlabel}: 판단불가</span>")
+                                    elif _qv:
+                                        _qf_parts.append(f"<span style='color:#16A34A'>✓ {_qlabel}</span>")
+                                    else:
+                                        _qf_parts.append(f"<span style='color:#9CA3AF'>✗ {_qlabel}</span>")
+                                st.markdown(
+                                    "<div style='font-size:11px;margin-top:6px'><b>품질 요소 판정</b><br>"
+                                    + " &nbsp;│&nbsp; ".join(_qf_parts)
+                                    + "<br><small>★=패턴 기반(신뢰도 高), 그 외=단어 등장 여부</small></div>",
+                                    unsafe_allow_html=True)
 
                         # 액션 버튼 행
                         _mba, _mbb = st.columns([1, 1])

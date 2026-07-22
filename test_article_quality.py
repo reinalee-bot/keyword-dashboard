@@ -243,46 +243,91 @@ class TestClassifyMonitoringRisk(unittest.TestCase):
 # Group 4: _calc_pr_value_score — 점수 분산화
 # ══════════════════════════════════════════════════════════════
 class TestCalcPrValueScore(unittest.TestCase):
+    """
+    9축 점수 체계 검증.
+    _calc_pr_value_score 직접 호출 전 _quality_factors / _confidence 필드를 설정해야 한다.
+    score_monitoring_candidate()를 사용해 전체 파이프라인을 포함하여 검증.
+    """
 
-    def _scored_art(self, category, rlevel="보통", atype="기획·분석", tier=3,
-                    reasons=None, queries=None, risk_class="not_risk"):
-        a = _art("테스트 기사", atype=atype, rlevel=rlevel, tier=tier)
-        a["_relevance_reasons"] = reasons or []
-        a["_matched_queries"] = queries or []
-        a["_risk_class"] = risk_class
-        return a
+    def _full_scored_art(self, title, desc, atype, rlevel, tier=3,
+                         rtype="일반", queries=None, groups=None,
+                         risk_class=None, pub_date="2026-07-22"):
+        """score_monitoring_candidate()를 통해 완전히 점수 계산된 기사 반환."""
+        a = {
+            "title": title, "description": desc,
+            "article_type": atype,
+            "_relevance_level": rlevel, "_relevance_type": rtype,
+            "_matched_queries": queries or [], "_matched_groups": groups or [],
+            "_media_tier": tier, "_relevance_reasons": [],
+            "_relevance_score": {"높음": 80, "보통": 55, "낮음": 20}.get(rlevel, 55),
+            "media_name": "테스트매체", "url": "https://example.com/test",
+            "_in_whitelist": tier <= 2, "score": 50, "pub_date": pub_date,
+        }
+        if risk_class:
+            a["_risk_class"] = risk_class
+        return mon.score_monitoring_candidate(a)
 
-    # ㉓ urgent_incident → 점수 매우 높음 (90점)
+    # ㉓ urgent_incident(SCK 직접 사건) → 종합 점수 높음
     def test_23_urgent_incident_score_high(self):
-        a = self._scored_art("리스크", risk_class="urgent_incident")
-        score = mon._calc_pr_value_score(a, "리스크")
-        self.assertGreaterEqual(score, 85)
+        a = self._full_scored_art(
+            title="SCK Corp 시스템 데이터 유출 사고 발생",
+            desc="SCK Corp의 클라우드 시스템에서 고객 데이터 유출 사고가 발생했다. 수십만 건의 개인정보가 노출될 위험에 처했다.",
+            atype="일반 기사", rlevel="높음", rtype="리스크",
+            groups=["company"], queries=["company/SCK"],
+        )
+        score = a["_pr_value_score"]
+        self.assertGreaterEqual(score, 50)  # 리스크 카테고리 + SCK 언급 → 중간 이상
 
-    # ㉔ 기획기사 후보, 1등급 매체 → 80점
+    # ㉔ 기획기사 후보 + tier1 + 고신뢰도 내용 → 70점 이상
     def test_24_editorial_tier1_score(self):
-        a = self._scored_art("기획기사 후보", rlevel="높음", tier=1)
-        score = mon._calc_pr_value_score(a, "기획기사 후보")
-        self.assertGreaterEqual(score, 75)
+        a = self._full_scored_art(
+            title="왜 기업 클라우드 보안 투자가 급증하는가 — 배경과 전략 분석",
+            desc="클라우드 보안 투자가 30% 급증했다. 복수 기업의 원인과 배경을 전문가 의견과 함께 분석한다. 영향과 대응 방향을 진단했다.",
+            atype="기획·분석", rlevel="높음", tier=1,
+            groups=["ai_ax"], queries=["ai_ax/클라우드 보안"],
+        )
+        score = a["_pr_value_score"]
+        self.assertGreaterEqual(score, 65)  # 1등급 매체 + 풍부한 내용 → 높은 점수
 
-    # ㉕ 기획기사 후보, 4등급 매체, 이유 없음 → 60점 이하
+    # ㉕ 기획기사 후보, 4등급 매체, 짧은 설명 → 중간 이하
     def test_25_editorial_tier4_no_reasons_lower_score(self):
-        a = self._scored_art("기획기사 후보", tier=4, reasons=[])
-        score = mon._calc_pr_value_score(a, "기획기사 후보")
-        self.assertLessEqual(score, 65)
+        a = self._full_scored_art(
+            title="기업 보안 시장 분석 보고서",
+            desc="보안 시장 분석 내용이다.",
+            atype="기획·분석", rlevel="보통", tier=4,
+            groups=["cloud_security"],
+        )
+        score = a["_pr_value_score"]
+        self.assertLessEqual(score, 55)  # 4등급 + 짧은 요약 → 낮은 점수
 
-    # ㉖ 보도자료형 기사 → PR 점수 상한 35
+    # ㉖ 보도자료형 기사 → 홍보성 감점으로 점수 낮음
     def test_26_pr_article_capped_at_35(self):
-        a = self._scored_art("기획기사 후보", atype="보도자료형", rlevel="높음", tier=1)
-        score = mon._calc_pr_value_score(a, "기획기사 후보")
-        self.assertLessEqual(score, 35)
+        a = self._full_scored_art(
+            title="SCK Corp, 보안 솔루션 파트너십 체결 발표",
+            desc="SCK Corp가 글로벌 보안 기업과 파트너십 체결을 공식 발표했다.",
+            atype="보도자료형", rlevel="높음", tier=1,
+            groups=["company"], queries=["company/SCK"],
+        )
+        score = a["_pr_value_score"]
+        self.assertLessEqual(score, 40)  # 보도자료성 감점(-20) 적용
 
-    # ㉗ 기획기사 후보: 이유 많을수록 점수 높아짐
+    # ㉗ 내용 풍부한 기사 vs 짧은 기사 → 풍부한 기사 점수 높음
     def test_27_more_reasons_higher_score(self):
-        a_low  = self._scored_art("기획기사 후보", tier=2, reasons=[])
-        a_high = self._scored_art("기획기사 후보", tier=2, reasons=["A", "B", "C", "D"])
-        score_low  = mon._calc_pr_value_score(a_low, "기획기사 후보")
-        score_high = mon._calc_pr_value_score(a_high, "기획기사 후보")
-        self.assertGreater(score_high, score_low)
+        a_low = self._full_scored_art(
+            title="AI 보안 기사",
+            desc="AI 보안 관련 내용이다.",
+            atype="기획·분석", rlevel="보통", tier=2,
+            groups=["ai_ax"],
+        )
+        a_high = self._full_scored_art(
+            title="왜 AI 보안 투자가 급증하는가 — 원인과 전망 분석",
+            desc="AI 보안 투자가 50% 증가했다. 전문가들은 위협 증가와 규제 강화를 원인으로 꼽았다. 기업 영향과 대응 방향을 분석했다.",
+            atype="기획·분석", rlevel="높음", tier=2,
+            groups=["ai_ax"], queries=["ai_ax/AI 보안"],
+        )
+        score_low  = a_low["_pr_value_score"]
+        score_high = a_high["_pr_value_score"]
+        self.assertGreater(score_high, score_low)  # 풍부한 내용 → 더 높은 점수
 
 
 # ══════════════════════════════════════════════════════════════

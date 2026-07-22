@@ -451,9 +451,11 @@ def _determine_category(article: dict) -> str:
         if any(e.lower() in text for e in _COMPETITOR_ENTITIES):
             return "경쟁사"
 
-    # 기획기사 후보: 기획·분석 유형 + 관련성 보통 이상 + 보도자료성 아님
+    # 기획기사 후보: 기획·분석 유형 + 관련성 보통 이상 + 보도자료성 아님 + 신뢰도 낮음 제외
+    confidence = article.get("_confidence", "보통")
     if (atype == "기획·분석" and rlevel in {"높음", "보통"}
-            and not _is_promotional_article(article)):
+            and not _is_promotional_article(article)
+            and confidence != "낮음"):
         return "기획기사 후보"
 
     if "ai_ax" in groups:
@@ -510,66 +512,220 @@ def _is_local_support_program(article: dict) -> bool:
     return False
 
 
+# ══════════════════════════════════════════════════════════════
+# 품질 요소 독립 판정 (제목+요약 기반, 본문 미확보 명시)
+# ══════════════════════════════════════════════════════════════
+
+_STAT_PATTERN    = re.compile(r'\d[\d,]*\s*(%|배|조원|억원|천억|만개|건|명|개사|포인트|bp)')
+_EXPERT_TITLES   = {"교수", "연구원", "전문가", "박사", "원장", "소장", "책임연구"}
+_CHANGE_WORDS_QF = {"증가", "감소", "급증", "급감", "상승", "하락", "전환", "확산", "성장", "위축", "둔화"}
+_CAUSE_WORDS_QF  = {"원인", "배경", "이유", "때문에", "영향으로", "결과로", "맞물려"}
+_IMPACT_WORDS_QF = {"영향", "피해", "위협", "기회", "비용", "리스크", "부담", "효과", "타격"}
+_PR_EXPAND_QF    = {"왜", "어떻게", "과제", "전략", "방향", "해법", "전망", "필요", "대응"}
+
+
+def _check_quality_factors(article: dict) -> dict:
+    """
+    8개 품질 요소를 독립적으로 판정한다. 제목+요약(Naver API)만 사용.
+    단어 등장 여부와 패턴 기반 판정을 구분해 표시한다.
+
+    반환 키:
+        industry_change   : 변화·현상 감지 (단어 기반)
+        cause_background  : 원인·배경 포함 (단어 기반)
+        business_impact   : 기업 영향 포함 (단어 기반)
+        data_statistics   : 수치·통계 존재 (숫자+단위 패턴 기반 — 더 신뢰 가능)
+        multiple_cases    : 복수 사례 (판단 불가 — 제목+요약으로 충분히 확인 불가)
+        expert_source     : 전문가·외부 근거 (직함 단어 기반)
+        pr_expandability  : 기획 확장 가능성 (단어 기반)
+        is_promotional    : 홍보·보도자료 중심 여부 (PR 신호 기반 — 신뢰도 높음)
+    """
+    title    = article.get("title", "")
+    desc     = article.get("description", "")
+    combined = title + " " + desc
+
+    return {
+        "industry_change":  any(w in combined for w in _CHANGE_WORDS_QF),
+        "cause_background": any(w in combined for w in _CAUSE_WORDS_QF),
+        "business_impact":  any(w in combined for w in _IMPACT_WORDS_QF),
+        "data_statistics":  bool(_STAT_PATTERN.search(combined)),        # 패턴 기반 (신뢰도 高)
+        "multiple_cases":   None,                                         # 판단 불가 (본문 미확보)
+        "expert_source":    any(w in combined for w in _EXPERT_TITLES),
+        "pr_expandability": any(w in combined for w in _PR_EXPAND_QF),
+        "is_promotional":   _is_promotional_article(article),            # 패턴 기반 (신뢰도 高)
+    }
+
+
+def _calc_confidence(article: dict, quality_factors: dict) -> str:
+    """
+    판정 신뢰도 — 콘텐츠 풍부도만 기준으로 판정. SCK 관련성은 신뢰도에 영향 없음.
+
+    반환: "높음" | "보통" | "낮음"
+
+    판단 기준:
+        desc < 30자         → 낮음 (요약 없음)
+        desc 30-80자        → 보통 (짧은 요약)
+        desc 80자 이상      → 기본 보통
+        + 품질 요소 3개 이상 감지 → 높음
+        + 통계·홍보성은 패턴 기반이므로 가중치 부여
+    """
+    desc = article.get("description", "")
+    desc_len = len(desc.strip())
+
+    if desc_len < 30:
+        return "낮음"
+
+    # 품질 요소 중 신뢰할 수 있는 것만 카운트
+    reliable_count = sum([
+        bool(quality_factors.get("data_statistics")),   # 패턴 기반
+        bool(quality_factors.get("industry_change")),
+        bool(quality_factors.get("business_impact")),
+        bool(quality_factors.get("expert_source")),
+        bool(quality_factors.get("pr_expandability")),
+    ])
+
+    if desc_len >= 80 and reliable_count >= 3:
+        return "높음"
+    if desc_len >= 30 and reliable_count >= 1:
+        return "보통"
+    return "낮음"
+
+
+# ══════════════════════════════════════════════════════════════
+# 9축 점수 체계
+# ══════════════════════════════════════════════════════════════
+
 def _calc_pr_value_score(article: dict, category: str) -> int:
-    """PR 활용도 점수 0-100을 반환한다."""
-    rlevel  = article.get("_relevance_level", "낮음")
-    atype   = article.get("article_type", "일반 기사")
-    tier    = article.get("_media_tier", 4)
-    queries = set(article.get("_matched_queries", []))
+    """
+    PR 활용도 종합 점수(0-100)를 반환한다.
+    세부 축 점수는 article["_score_axes"]에 저장 (score_monitoring_candidate에서 호출).
 
+    9개 평가축:
+        ① SCK 사업 관련성    0-25
+        ② 산업 인사이트       0-25
+        ③ 근거 구체성         0-20
+        ④ PR 기획 확장성      0-15
+        ⑤ 기사 품질·객관성    0-10
+        ⑥ 최신성              0-5
+        감점: 보도자료성 / 문맥 부족 / 중복·홍보성
+    """
+    rlevel     = article.get("_relevance_level", "낮음")
+    atype      = article.get("article_type", "일반 기사")
+    tier       = article.get("_media_tier", 4)
     risk_class = article.get("_risk_class", "")
-    reason_count = len(article.get("_relevance_reasons", []))
-    query_count  = len(set(article.get("_matched_queries", [])))
+    qf         = article.get("_quality_factors", {})
+    confidence = article.get("_confidence", "낮음")
+    query_count = len(set(article.get("_matched_queries", [])))
 
-    if category == "자사·관계사":
-        base = 90 if rlevel != "낮음" else 60
-    elif category == "리스크":
-        # SCK 직접 언급 사건은 즉시 대응 필요 → 높은 점수
+    # ── ① SCK 사업 관련성 (0-25) ───────────────────────────────
+    cat_rel = {
+        "자사·관계사": 25,
+        "리스크": 20 if risk_class == "urgent_incident" else 15,
+        "경쟁사": 18,
+        "기획기사 후보": {"높음": 20, "보통": 15, "낮음": 5}.get(rlevel, 5),
+        "AI·AX 시장동향": {"높음": 15, "보통": 10, "낮음": 3}.get(rlevel, 3),
+        "클라우드·보안": {"높음": 15, "보통": 10, "낮음": 3}.get(rlevel, 3),
+        "주요 벤더": {"높음": 12, "보통": 8, "낮음": 2}.get(rlevel, 2),
+    }
+    ax1 = cat_rel.get(category, {"높음": 8, "보통": 5, "낮음": 2}.get(rlevel, 2))
+
+    # ── ② 산업 인사이트 (0-25) ─────────────────────────────────
+    # 본문 미확보 상한: 기획기사 후보에만 적용. 리스크/자사 기사는 심각도가 신뢰도 기준임.
+    _apply_conf_cap = (confidence == "낮음" and category not in ("리스크", "자사·관계사"))
+    insight_cap = 15 if _apply_conf_cap else 25
+    if category in ("리스크", "자사·관계사"):
+        # 리스크: 심각도(risk_class) 기반
         if risk_class == "urgent_incident":
-            base = 90
-        elif rlevel != "낮음":
-            base = 70 + min(reason_count * 2, 10)
+            ax2 = 20
+        elif rlevel == "높음":
+            ax2 = 14
         else:
-            base = 50
-    elif category == "경쟁사":
-        base = 75 if rlevel != "낮음" else 45
-    elif category == "기획기사 후보":
-        # 매체 등급 + 관련성 이유 수 + 쿼리 수로 세분화
-        if tier <= 1:
-            base = 80
-        elif tier == 2:
-            base = 70 + min(reason_count * 2, 8)
-        elif tier == 3:
-            base = 60 + min(reason_count * 2, 8) + min(query_count, 3)
-        else:
-            base = 50 + min(reason_count * 2, 8)
-    elif category == "AI·AX 시장동향":
-        base = {"높음": 70, "보통": 55}.get(rlevel, 25)
-    elif category == "클라우드·보안":
-        risk_queries = {
-            "cloud_security/소프트웨어 라이선스",
-            "cloud_security/사이버 공격 기업",
-            "cloud_security/클라우드 보안",
-        }
-        b = 65 if (queries & risk_queries) else 50
-        base = max(b - 25, 20) if rlevel == "낮음" else b
-    elif category == "주요 벤더":
-        base = {"높음": 60, "보통": 40}.get(rlevel, 20)
+            ax2 = 8
+    elif atype == "기획·분석":
+        qf_count = sum([
+            bool(qf.get("industry_change")),
+            bool(qf.get("cause_background")),
+            bool(qf.get("business_impact")),
+            bool(qf.get("data_statistics")),
+            bool(qf.get("expert_source")),
+        ])
+        ax2 = min(10 + qf_count * 3, insight_cap)
+    elif atype in ("인터뷰", "행사·현장"):
+        ax2 = min(8, insight_cap)
     else:
-        if atype == "기획·분석":
-            base = 45
-        else:
-            base = {"높음": 40, "보통": 30}.get(rlevel, 15)
+        ax2 = min(5 if qf.get("industry_change") else 2, insight_cap)
 
-    # PR 점수 상한 (홍보성·지역지원·벤더전용 기사)
-    cap = 100
-    if _is_promotional_article(article):
-        cap = min(cap, 35)
+    # ── ③ 근거 구체성 (0-20) ───────────────────────────────────
+    # 본문 미확보 상한: 기획기사 후보에만 적용
+    evidence_cap = 10 if _apply_conf_cap else 20
+    ev_score = 0
+    if qf.get("data_statistics"):   ev_score += 7   # 패턴 기반, 신뢰도 높음
+    if qf.get("expert_source"):     ev_score += 5
+    if qf.get("cause_background"):  ev_score += 4
+    if qf.get("business_impact"):   ev_score += 4
+    ax3 = min(ev_score, evidence_cap)
+
+    # ── ④ PR 기획 확장성 (0-15) ────────────────────────────────
+    if category == "기획기사 후보" and qf.get("pr_expandability"):
+        ax4 = 15
+    elif category == "기획기사 후보":
+        ax4 = 10
+    elif qf.get("pr_expandability") and atype == "기획·분석":
+        ax4 = 8
+    elif category in ("AI·AX 시장동향", "클라우드·보안"):
+        ax4 = 5
+    else:
+        ax4 = 2
+
+    # ── ⑤ 기사 품질·객관성 (0-10) ─────────────────────────────
+    tier_pts = {1: 10, 2: 8, 3: 6, 4: 4}
+    ax5 = tier_pts.get(tier, 3)
+    if qf.get("expert_source"):
+        ax5 = min(ax5 + 1, 10)
+
+    # ── ⑥ 최신성 (0-5) ────────────────────────────────────────
+    from datetime import datetime, timezone, timedelta
+    KST = timezone(timedelta(hours=9))
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
+    pub_date = article.get("pub_date", "")
+    if pub_date >= today_str:
+        ax6 = 5
+    elif pub_date and pub_date >= (datetime.now(KST) - timedelta(days=1)).strftime("%Y-%m-%d"):
+        ax6 = 3
+    else:
+        ax6 = 0
+
+    base = ax1 + ax2 + ax3 + ax4 + ax5 + ax6
+
+    # ── 감점 ───────────────────────────────────────────────────
+    deduct_pr     = 0   # 보도자료성
+    deduct_ctx    = 0   # 문맥 관련성 부족
+    deduct_dup    = 0   # 중복·홍보성
+
+    if qf.get("is_promotional"):
+        deduct_pr = -20
+    if query_count == 0:
+        deduct_ctx = -10
     if _is_vendor_mention_only(article):
-        cap = min(cap, 25)
+        deduct_dup = -10
     if _is_local_support_program(article):
-        cap = min(cap, 25)
-    return min(base, cap)
+        deduct_dup = min(deduct_dup, -10)
+
+    total = max(0, min(100, base + deduct_pr + deduct_ctx + deduct_dup))
+
+    # 축 점수 저장 (dashboard에서 세부 표시용)
+    article["_score_axes"] = {
+        "sck_relevance":    ax1,
+        "industry_insight": ax2,
+        "evidence_quality": ax3,
+        "pr_expandability": ax4,
+        "article_quality":  ax5,
+        "recency":          ax6,
+        "deduct_pr":        deduct_pr,
+        "deduct_context":   deduct_ctx,
+        "deduct_duplicate": deduct_dup,
+    }
+
+    return total
 
 
 def _make_reason(article: dict, category: str, risk_class: str = "") -> str:
@@ -640,8 +796,13 @@ def score_monitoring_candidate(article: dict) -> dict:
     rscore     = article.get("_relevance_score", 0)
     buzz       = article.get("score", 0)
 
+    # 품질 요소 + 신뢰도를 먼저 계산 (_determine_category, _calc_pr_value_score에서 참조)
+    quality_factors = _check_quality_factors(article)
+    article["_quality_factors"] = quality_factors
+    article["_confidence"] = _calc_confidence(article, quality_factors)
+
     risk_class = _classify_monitoring_risk(article)
-    article["_risk_class"] = risk_class          # _calc_pr_value_score에서 참조
+    article["_risk_class"] = risk_class
     category   = _determine_category(article)
     pr_score   = _calc_pr_value_score(article, category)
     is_risk    = (risk_class == "urgent_incident")
