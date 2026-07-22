@@ -629,17 +629,17 @@ def _calc_pr_value_score(article: dict, category: str) -> int:
     ax1 = cat_rel.get(category, {"높음": 8, "보통": 5, "낮음": 2}.get(rlevel, 2))
 
     # ── ② 산업 인사이트 (0-25) ─────────────────────────────────
-    # 본문 미확보 상한: 기획기사 후보에만 적용. 리스크/자사 기사는 심각도가 신뢰도 기준임.
-    _apply_conf_cap = (confidence == "낮음" and category not in ("리스크", "자사·관계사"))
+    # 신뢰도 낮음 시 상한 적용 — 리스크/자사 포함 모든 카테고리 동일
+    _apply_conf_cap = (confidence == "낮음")
     insight_cap = 15 if _apply_conf_cap else 25
     if category in ("리스크", "자사·관계사"):
-        # 리스크: 심각도(risk_class) 기반
+        # 리스크: 심각도(risk_class) 기반; 본문 미확보 시 insight_cap 적용
         if risk_class == "urgent_incident":
-            ax2 = 20
+            ax2 = min(20, insight_cap)
         elif rlevel == "높음":
-            ax2 = 14
+            ax2 = min(14, insight_cap)
         else:
-            ax2 = 8
+            ax2 = min(8, insight_cap)
     elif atype == "기획·분석":
         qf_count = sum([
             bool(qf.get("industry_change")),
@@ -655,7 +655,7 @@ def _calc_pr_value_score(article: dict, category: str) -> int:
         ax2 = min(5 if qf.get("industry_change") else 2, insight_cap)
 
     # ── ③ 근거 구체성 (0-20) ───────────────────────────────────
-    # 본문 미확보 상한: 기획기사 후보에만 적용
+    # 신뢰도 낮음 시 상한 적용 — 리스크/자사 포함 모든 카테고리 동일
     evidence_cap = 10 if _apply_conf_cap else 20
     ev_score = 0
     if qf.get("data_statistics"):   ev_score += 7   # 패턴 기반, 신뢰도 높음

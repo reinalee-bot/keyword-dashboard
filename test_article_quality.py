@@ -267,7 +267,8 @@ class TestCalcPrValueScore(unittest.TestCase):
             a["_risk_class"] = risk_class
         return mon.score_monitoring_candidate(a)
 
-    # ㉓ urgent_incident(SCK 직접 사건) → 종합 점수 높음
+    # ㉓ urgent_incident(SCK 직접 사건) → 종합 점수 중간 이상
+    # 본문 미확보 시 신뢰도="낮음" → ax2 상한 15 적용 → 총점 ~48
     def test_23_urgent_incident_score_high(self):
         a = self._full_scored_art(
             title="SCK Corp 시스템 데이터 유출 사고 발생",
@@ -276,7 +277,7 @@ class TestCalcPrValueScore(unittest.TestCase):
             groups=["company"], queries=["company/SCK"],
         )
         score = a["_pr_value_score"]
-        self.assertGreaterEqual(score, 50)  # 리스크 카테고리 + SCK 언급 → 중간 이상
+        self.assertGreaterEqual(score, 45)  # 리스크 카테고리 + SCK 언급, 본문 미확보시 ax2 상한 적용
 
     # ㉔ 기획기사 후보 + tier1 + 고신뢰도 내용 → 70점 이상
     def test_24_editorial_tier1_score(self):
@@ -310,6 +311,40 @@ class TestCalcPrValueScore(unittest.TestCase):
         )
         score = a["_pr_value_score"]
         self.assertLessEqual(score, 40)  # 보도자료성 감점(-20) 적용
+
+    # ㉖-b 리스크 기사 신뢰도="낮음" → ax2 상한 15 적용 (리스크 카테고리 예외 없음)
+    def test_27b_risk_low_confidence_caps_ax2(self):
+        """본문 미확보 리스크 기사의 ax2(산업인사이트)는 15 이하여야 한다."""
+        a = self._full_scored_art(
+            title="SCK Corp 랜섬웨어 감염 피해 발생",
+            desc="SCK Corp에서 랜섬웨어 피해가 발생했다.",  # 짧은 설명 → 신뢰도 낮음
+            atype="일반 기사", rlevel="높음", rtype="리스크",
+            groups=["company"], queries=["company/SCK"],
+        )
+        ax2 = a.get("_score_axes", {}).get("industry_insight", 999)
+        confidence = a.get("_confidence", "")
+        self.assertEqual(confidence, "낮음", "짧은 본문 → 신뢰도 낮음이어야 한다")
+        self.assertLessEqual(ax2, 15,
+            f"리스크 기사도 신뢰도 낮음 시 ax2 ≤ 15 이어야 한다 (실제: {ax2})")
+
+    # ㉖-c 리스크 기사 신뢰도="보통" 이상 → ax2 상한 없음 (urgent_incident=20)
+    def test_27c_risk_high_confidence_no_cap(self):
+        """본문이 충분한 리스크 기사의 ax2는 15를 초과할 수 있다."""
+        a = self._full_scored_art(
+            title="SCK Corp 시스템 침해 사고 발생 — 원인과 영향 분석",
+            desc=(
+                "SCK Corp 클라우드 시스템에서 침해 사고가 발생했다. "
+                "전문가들은 취약점 악용이 원인이라고 밝혔다. "
+                "피해 규모는 수십만 건으로 추정되며 영향이 확산되고 있다."
+            ),  # 충분한 설명 + 원인/영향/전문가 → 신뢰도 보통 이상
+            atype="일반 기사", rlevel="높음", rtype="리스크",
+            groups=["company"], queries=["company/SCK"],
+        )
+        ax2 = a.get("_score_axes", {}).get("industry_insight", 0)
+        confidence = a.get("_confidence", "")
+        self.assertNotEqual(confidence, "낮음", "충분한 본문 → 신뢰도 보통 이상이어야 한다")
+        self.assertGreater(ax2, 15,
+            f"신뢰도 높음/보통 시 리스크 기사 ax2 > 15 가능 (실제: {ax2})")
 
     # ㉗ 내용 풍부한 기사 vs 짧은 기사 → 풍부한 기사 점수 높음
     def test_27_more_reasons_higher_score(self):
