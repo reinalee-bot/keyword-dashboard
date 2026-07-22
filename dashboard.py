@@ -15,10 +15,12 @@ import github_storage as gh
 import news_fetcher as nf
 from collector import collect_single_keyword
 import monitoring as mon
+import monitoring_review_store as mrs
 from monitoring_tab_helpers import (
     today_kst, monitoring_config_version,
     apply_category_filter, count_by_category, make_widget_key,
     apply_urgency_filter, sort_monitoring_articles,
+    apply_review_filter, count_review_summary,
 )
 
 # ── 상수 ──────────────────────────────────────────────────
@@ -1379,7 +1381,8 @@ with tab4:
                    ("t4_clusters", {}), ("t4_mon_kws", []),
                    ("t4_mon_history", []), ("mon_refresh_token", 0),
                    ("mon_cat_filter", "전체"),
-                   ("mon_risk_only", False), ("mon_sort_by", "우선순위순")]:
+                   ("mon_risk_only", False), ("mon_sort_by", "우선순위순"),
+                   ("mon_review_filter", "전체")]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
@@ -1447,6 +1450,25 @@ with tab4:
                     if _mon_updated_at else "—")
         st.caption(f"마지막 업데이트: {_upd_str}  ·  최종 선정 {_mon_cnt}건")
 
+        # ── ① 검토 현황 요약 (7단계) ─────────────────────────
+        _mon_reviews = mrs.load_reviews()
+        _rv_summary  = count_review_summary(_mon_selected, _mon_reviews)
+        _rvc1, _rvc2, _rvc3, _rvc4, _rvc5 = st.columns(5)
+        for _rvc, _lbl, _val in [
+            (_rvc1, "전체 선정",  _rv_summary["전체"]),
+            (_rvc2, "검토 완료",  _rv_summary["검토완료"]),
+            (_rvc3, "관심 기사",  _rv_summary["관심 기사"]),
+            (_rvc4, "PR 후보",    _rv_summary["PR 후보"]),
+            (_rvc5, "제외",       _rv_summary["제외"]),
+        ]:
+            with _rvc:
+                st.markdown(
+                    f"<div style='background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;"
+                    f"padding:8px 10px;text-align:center;margin-bottom:4px'>"
+                    f"<div style='font-size:20px;font-weight:800;color:#102A43'>{_val}</div>"
+                    f"<div style='font-size:11px;color:#64748B'>{_lbl}</div></div>",
+                    unsafe_allow_html=True)
+
         if _mon_cnt < 10:
             st.info(f"최근 24시간 기준, 모니터링 기준을 통과한 기사는 총 {_mon_cnt}건입니다.")
 
@@ -1472,8 +1494,8 @@ with tab4:
         if _cat_active != st.session_state["mon_cat_filter"]:
             st.session_state["mon_cat_filter"] = _cat_active
 
-        # ── 긴급 리스크 필터 + 정렬 ─────────────────────────
-        _frow1, _frow2 = st.columns([6, 4])
+        # ── 긴급 리스크 필터 + 정렬 + 검토 상태 필터 ──────
+        _frow1, _frow2, _frow3 = st.columns([4, 4, 4])
         with _frow1:
             _risk_only_val = st.checkbox(
                 "🚨 긴급 리스크만 보기", key="mon_risk_only_chk",
@@ -1489,14 +1511,26 @@ with tab4:
                 key="mon_sort_radio", label_visibility="collapsed")
             if _sort_sel != st.session_state["mon_sort_by"]:
                 st.session_state["mon_sort_by"] = _sort_sel
+        with _frow3:
+            _rv_filter_opts = ["전체", "검토 전", "관심 기사", "PR 후보", "제외"]
+            _rv_filter_cur  = st.session_state.get("mon_review_filter", "전체")
+            _rv_filter_sel  = st.radio(
+                "검토 상태", _rv_filter_opts, horizontal=True,
+                index=(_rv_filter_opts.index(_rv_filter_cur)
+                       if _rv_filter_cur in _rv_filter_opts else 0),
+                key="mon_rv_filter_radio", label_visibility="collapsed")
+            if _rv_filter_sel != st.session_state["mon_review_filter"]:
+                st.session_state["mon_review_filter"] = _rv_filter_sel
 
         # ── 기사 카드 ─────────────────────────────────────
         _ranked = apply_category_filter(_mon_selected, _cat_active)
         _ranked = apply_urgency_filter(_ranked, st.session_state.get("mon_risk_only", False))
+        _ranked = apply_review_filter(_ranked, st.session_state.get("mon_review_filter", "전체"),
+                                      _mon_reviews)
         _ranked = sort_monitoring_articles(_ranked, st.session_state.get("mon_sort_by", "우선순위순"))
 
         if not _ranked:
-            st.caption("해당 카테고리에 선정된 기사가 없습니다.")
+            st.caption("해당 조건에 선정된 기사가 없습니다.")
         else:
             _CAT_STYLE = {
                 "리스크":       ("#FEF3C7","#92400E"),
@@ -1641,6 +1675,94 @@ with tab4:
                                          type="secondary", use_container_width=True):
                                 st.session_state[_mon_reg_k] = False
                                 st.rerun()
+
+                    # ── 검토 결과 기록 (7단계) ──────────────────────────
+                    _art_id = mrs.make_article_id(
+                        _mon_url, _mon_ttl, _mon_mn, _art.get("pub_date", ""))
+                    _existing_rv = _mon_reviews.get(_art_id, {})
+
+                    _rs_key = f"{_mon_ak}_rv_status"
+                    _ut_key = f"{_mon_ak}_rv_usage"
+                    _fu_key = f"{_mon_ak}_rv_follow"
+                    _rm_key = f"{_mon_ak}_rv_memo"
+                    if _rs_key not in st.session_state:
+                        st.session_state[_rs_key] = _existing_rv.get("review_status", "검토 전")
+                    if _ut_key not in st.session_state:
+                        st.session_state[_ut_key] = _existing_rv.get("usage_type", "추가 검토")
+                    if _fu_key not in st.session_state:
+                        st.session_state[_fu_key] = _existing_rv.get("follow_up_required", "")
+                    if _rm_key not in st.session_state:
+                        st.session_state[_rm_key] = _existing_rv.get("reviewer_memo", "")
+
+                    _rv_saved = bool(_existing_rv)
+                    _rv_exp_label = (
+                        f"📝 검토 결과 기록 [{st.session_state[_rs_key]}]"
+                        if _rv_saved else "📝 검토 결과 기록")
+
+                    with st.expander(_rv_exp_label, expanded=False):
+                        _rv_status_sel = st.selectbox(
+                            "검토 상태",
+                            mrs.REVIEW_STATUSES,
+                            index=(mrs.REVIEW_STATUSES.index(st.session_state[_rs_key])
+                                   if st.session_state[_rs_key] in mrs.REVIEW_STATUSES else 0),
+                            key=_rs_key)
+
+                        _is_pr_candidate = (_rv_status_sel == "PR 후보")
+                        if _is_pr_candidate:
+                            _rv_usage_sel = st.selectbox(
+                                "활용 형태",
+                                mrs.USAGE_TYPES,
+                                index=(mrs.USAGE_TYPES.index(st.session_state[_ut_key])
+                                       if st.session_state[_ut_key] in mrs.USAGE_TYPES
+                                       else len(mrs.USAGE_TYPES) - 1),
+                                key=_ut_key)
+                            _rv_follow_val = st.text_area(
+                                "후속 확인 사항",
+                                value=st.session_state[_fu_key],
+                                key=_fu_key,
+                                placeholder="예: 현업 인터뷰 필요, 관련 매출 수치 확인",
+                                height=80)
+                        else:
+                            _rv_usage_sel = ""
+                            _rv_follow_val = ""
+
+                        _rv_memo_val = st.text_area(
+                            "담당자 메모",
+                            value=st.session_state[_rm_key],
+                            key=_rm_key,
+                            placeholder="자유 메모",
+                            height=80)
+
+                        if _rv_saved:
+                            st.caption(
+                                f"저장일시: {_existing_rv.get('reviewed_at', '—')}")
+
+                        if st.button("저장", key=f"{_mon_ak}_rv_save",
+                                     type="primary", use_container_width=True):
+                            _rv_data = {
+                                "article_id":            _art_id,
+                                "title":                 _mon_ttl,
+                                "url":                   _mon_url,
+                                "media":                 _mon_mn,
+                                "published_at":          _mon_dt,
+                                "category":              _mon_cat,
+                                "monitoring_priority":   str(_mon_pri),
+                                "relevance_score":       str(_mon_rsc),
+                                "news_importance_score": str(_mon_sc),
+                                "pr_usability_score":    str(_mon_prscore),
+                                "selection_reason":      _mon_why,
+                                "pr_suggestion":         _sug,
+                                "review_status":         _rv_status_sel,
+                                "usage_type":            _rv_usage_sel,
+                                "follow_up_required":    _rv_follow_val,
+                                "reviewer_memo":         _rv_memo_val,
+                            }
+                            _ok, _err = mrs.save_review(_rv_data)
+                            if _ok:
+                                st.toast(f"저장됨 — {_rv_status_sel}")
+                                st.rerun()
+                            else:
+                                st.error(f"저장 실패: {_err}")
 
     st.markdown("<hr style='margin:2rem 0 1.5rem'>", unsafe_allow_html=True)
 

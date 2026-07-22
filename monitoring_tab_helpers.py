@@ -63,6 +63,50 @@ def apply_urgency_filter(ranked: list, risk_only: bool = False) -> list:
             if art.get("_is_risk_priority", False)]
 
 
+def apply_review_filter(ranked: list, review_filter: str, reviews: dict) -> list:
+    """
+    검토 상태 필터를 적용한다.
+    - '전체': 변경 없음
+    - '검토 전': reviews에 없거나 review_status == '검토 전'인 기사
+    - 그 외: reviews의 review_status가 해당 상태인 기사
+    """
+    if review_filter == "전체":
+        return ranked
+    from monitoring_review_store import make_article_id
+    result = []
+    for rank, art in ranked:
+        aid = make_article_id(
+            art.get("url", ""), art.get("title", ""),
+            art.get("media_name", ""), art.get("pub_date", ""))
+        rv = reviews.get(aid, {})
+        status = rv.get("review_status", "검토 전") or "검토 전"
+        if status == review_filter:
+            result.append((rank, art))
+    return result
+
+
+def count_review_summary(articles: list, reviews: dict) -> dict:
+    """
+    전체 선정 기사 기준 검토 현황을 집계한다.
+    반환: {"전체": N, "검토완료": N, "관심 기사": N, "PR 후보": N, "제외": N, "검토 전": N}
+    """
+    from monitoring_review_store import make_article_id
+    total = len(articles)
+    sub: dict = {"관심 기사": 0, "PR 후보": 0, "제외": 0, "검토 전": 0}
+    for art in articles:
+        aid = make_article_id(
+            art.get("url", ""), art.get("title", ""),
+            art.get("media_name", ""), art.get("pub_date", ""))
+        rv = reviews.get(aid, {})
+        status = rv.get("review_status", "검토 전") or "검토 전"
+        if status in sub:
+            sub[status] += 1
+        else:
+            sub["검토 전"] += 1
+    reviewed = sub["관심 기사"] + sub["PR 후보"] + sub["제외"]
+    return {"전체": total, "검토완료": reviewed, **sub}
+
+
 def sort_monitoring_articles(ranked: list, sort_by: str = "우선순위순") -> list:
     """
     정렬 기준에 따라 기사 목록을 재정렬한다.
