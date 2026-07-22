@@ -17,12 +17,16 @@ REVIEW_COLS = [
     "category", "monitoring_priority", "relevance_score",
     "news_importance_score", "pr_usability_score",
     "selection_reason", "pr_suggestion",
-    "review_status", "usage_type", "follow_up_required",
-    "reviewer_memo", "reviewed_at",
+    "review_status", "usage_type", "exclusion_reason",
+    "follow_up_required", "reviewer_memo", "reviewed_at",
 ]
 
-REVIEW_STATUSES = ["검토 전", "관심 기사", "PR 후보", "제외"]
-USAGE_TYPES     = ["기획기사", "보도자료", "인터뷰", "온드미디어", "내부 브리핑", "추가 검토"]
+REVIEW_STATUSES   = ["검토 전", "관심 기사", "PR 후보", "제외"]
+USAGE_TYPES       = ["기획기사", "보도자료", "인터뷰", "온드미디어", "내부 브리핑", "추가 검토"]
+EXCLUSION_REASONS = [
+    "보도자료성", "SCK 관련성 낮음", "인사이트 부족", "근거 부족",
+    "중복 기사", "오래된 기사", "오분류", "기타",
+]
 
 _KST = timezone(timedelta(hours=9))
 

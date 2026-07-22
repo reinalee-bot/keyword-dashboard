@@ -141,10 +141,14 @@ def _classify_monitoring_risk(article: dict) -> str:
     for sig in _NON_INCIDENT_SIGNALS:
         if sig in full_text:
             return "not_risk"
-    # 제목에 실제 사건 시그널이 있어야만 urgent_incident
-    for sig in _INCIDENT_SIGNALS:
-        if sig in title_text:
+    # 제목에 실제 사건 시그널이 있는 경우에만 판별
+    has_incident_signal = any(sig in title_text for sig in _INCIDENT_SIGNALS)
+    if has_incident_signal:
+        # SCK/관계사 직접 언급이 있어야 urgent_incident — 타사 사건은 security_trend
+        has_sck_mention = any(e.lower() in title_text for e in _COMPANY_ENTITIES)
+        if has_sck_mention:
             return "urgent_incident"
+        return "security_trend"
     return "security_trend"
 
 
@@ -447,7 +451,9 @@ def _determine_category(article: dict) -> str:
         if any(e.lower() in text for e in _COMPETITOR_ENTITIES):
             return "경쟁사"
 
-    if atype == "기획·분석" and rlevel in {"높음", "보통"}:
+    # 기획기사 후보: 기획·분석 유형 + 관련성 보통 이상 + 보도자료성 아님
+    if (atype == "기획·분석" and rlevel in {"높음", "보통"}
+            and not _is_promotional_article(article)):
         return "기획기사 후보"
 
     if "ai_ax" in groups:
@@ -511,14 +517,32 @@ def _calc_pr_value_score(article: dict, category: str) -> int:
     tier    = article.get("_media_tier", 4)
     queries = set(article.get("_matched_queries", []))
 
+    risk_class = article.get("_risk_class", "")
+    reason_count = len(article.get("_relevance_reasons", []))
+    query_count  = len(set(article.get("_matched_queries", [])))
+
     if category == "자사·관계사":
         base = 90 if rlevel != "낮음" else 60
     elif category == "리스크":
-        base = 80 if rlevel != "낮음" else 55
+        # SCK 직접 언급 사건은 즉시 대응 필요 → 높은 점수
+        if risk_class == "urgent_incident":
+            base = 90
+        elif rlevel != "낮음":
+            base = 70 + min(reason_count * 2, 10)
+        else:
+            base = 50
     elif category == "경쟁사":
         base = 75 if rlevel != "낮음" else 45
     elif category == "기획기사 후보":
-        base = 70 if tier <= 2 else 60
+        # 매체 등급 + 관련성 이유 수 + 쿼리 수로 세분화
+        if tier <= 1:
+            base = 80
+        elif tier == 2:
+            base = 70 + min(reason_count * 2, 8)
+        elif tier == 3:
+            base = 60 + min(reason_count * 2, 8) + min(query_count, 3)
+        else:
+            base = 50 + min(reason_count * 2, 8)
     elif category == "AI·AX 시장동향":
         base = {"높음": 70, "보통": 55}.get(rlevel, 25)
     elif category == "클라우드·보안":
@@ -571,7 +595,17 @@ def _make_reason(article: dict, category: str, risk_class: str = "") -> str:
         return "경쟁사(디모아) 동향 기사 — 시장 포지셔닝 참고"
 
     if category == "기획기사 후보":
-        return f"{media} 기획·분석 기사 — PR 활용 가능성 높음"
+        matched = [q.split("/", 1)[1] for q in article.get("_matched_queries", []) if "/" in q]
+        reasons = article.get("_relevance_reasons", [])
+        topic = matched[0] if matched else ""
+        hint  = reasons[0] if reasons else ""
+        if topic and hint:
+            return f"{media} 기획기사 소재 — {topic} 관련, {hint}"
+        elif topic:
+            return f"{media} 기획기사 소재 — {topic} 심층 분석 기사"
+        elif hint:
+            return f"{media} 기획기사 소재 — {hint}"
+        return f"{media} 기획·분석 심층 기사 — 기획기사 소재 검토"
 
     if category == "AI·AX 시장동향":
         matched = [q.split("/", 1)[1] for q in article.get("_matched_queries", [])
@@ -606,8 +640,9 @@ def score_monitoring_candidate(article: dict) -> dict:
     rscore     = article.get("_relevance_score", 0)
     buzz       = article.get("score", 0)
 
-    category   = _determine_category(article)
     risk_class = _classify_monitoring_risk(article)
+    article["_risk_class"] = risk_class          # _calc_pr_value_score에서 참조
+    category   = _determine_category(article)
     pr_score   = _calc_pr_value_score(article, category)
     is_risk    = (risk_class == "urgent_incident")
     priority   = max(0, min(100, round(rscore * 0.45 + buzz * 0.30 + pr_score * 0.25)))

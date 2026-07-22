@@ -40,8 +40,17 @@ NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
 # ── 분류 사전 ─────────────────────────────────────────────
 _PR_WORDS       = {"출시","발표","공개","체결","선정","공급","협력","파트너십","개최",
                    "선보여","도입","오픈","총판","업무협약","신규 서비스","수주","계약","론칭"}
-_FEATURE_WORDS  = {"기획","분석","진단","전망","전략","과제","해법","왜","어떻게","시장",
-                   "트렌드","확산","변화","핵심","경쟁","생태계","현황","동향","심층","리포트"}
+# 기획·분석 단서 — '시장', '변화', '동향', '현황'은 보도자료에도 빈번히 등장하므로 제거
+_FEATURE_WORDS  = {"기획","분석","진단","전망","과제","해법","왜","어떻게",
+                   "트렌드","확산","핵심","경쟁","생태계","심층","리포트",
+                   "비교","실태","원인","배경","영향","구조","전략적 분석"}
+# 보도자료성 강 신호 — 이 단어가 제목에 있으면 기획·분석으로 분류하지 않음
+_STRONG_PR_TITLE_SIGNALS = {
+    "파트너십 체결", "mou 체결", "업무협약 체결", "전략적 파트너십",
+    "정식 출시", "제품 출시", "솔루션 출시", "서비스 출시", "베타 출시",
+    "수주", "계약 체결", "인증 획득", "대상 수상", "선정됐다", "특허 출원",
+    "합작법인", "지분 투자", "임원 선임", "대표 취임",
+}
 _INTERVIEW_WORDS= {"인터뷰","만나다","만났다","대표이사","지사장","임원","강조했다","말했다",
                    "피력했다","밝혔다","설명했다","답했다","주장했다","전했다"}
 _EVENT_WORDS    = {"세미나","컨퍼런스","포럼","파트너데이","간담회","현장","설명회","전시회",
@@ -181,14 +190,18 @@ def classify_article_type(title: str, description: str,
     if any(w in combined for w in _EVENT_WORDS):
         return "행사·현장"
 
-    # 기획·분석 (2개 이상 단서)
-    if sum(1 for w in _FEATURE_WORDS if w in combined) >= 2:
+    # 보도자료 강 신호 — 제목에 명확한 PR 이벤트가 있으면 기획·분석 불가
+    title_lower = title.lower()
+    has_strong_pr_signal = any(sig in title_lower for sig in _STRONG_PR_TITLE_SIGNALS)
+
+    # 기획·분석 — 강한 보도자료 신호 없이, FEATURE_WORDS 3개 이상
+    if not has_strong_pr_signal and sum(1 for w in _FEATURE_WORDS if w in combined) >= 3:
         return "기획·분석"
 
     # 보도자료형
     pr_score = sum(1 for w in _PR_WORDS if w in combined)
     has_org  = any(w in combined for w in ["㈜", "주식회사", "법인", "대표이사", "대표 ", "사장 "])
-    if pr_score >= 2 or (pr_score >= 1 and has_org):
+    if has_strong_pr_signal or pr_score >= 2 or (pr_score >= 1 and has_org):
         return "보도자료형"
 
     return "일반 기사"
