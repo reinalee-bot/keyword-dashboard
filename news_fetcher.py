@@ -45,17 +45,36 @@ _FEATURE_WORDS  = {"기획","분석","진단","전망","과제","해법","왜","
                    "트렌드","확산","핵심","경쟁","생태계","심층","리포트",
                    "비교","실태","원인","배경","영향","구조","전략적 분석",
                    "조사","통계","전문가","설문","연구","인식조사"}
-# 보도자료성 강 신호 — 이 단어가 제목에 있으면 기획·분석으로 분류하지 않음
+# 보도자료성 강 신호 — 제목에 이 단어가 있으면 즉시 보도자료형으로 분류
 _STRONG_PR_TITLE_SIGNALS = {
+    # 파트너십·협약
     "파트너십 체결", "mou 체결", "업무협약 체결", "전략적 파트너십",
+    # 출시·공개
     "정식 출시", "제품 출시", "솔루션 출시", "서비스 출시", "베타 출시",
-    "수주", "계약 체결", "인증 획득", "대상 수상", "선정됐다", "특허 출원",
-    "합작법인", "지분 투자", "임원 선임", "대표 취임",
+    "론칭", "선봬", "선보였", "신규 출시",
+    # 수주·계약
+    "수주", "계약 체결", "공급계약", "조달 등록", "조달등록", "나라장터 등록",
+    # 인증·수상·선정
+    "인증 획득", "인증 취득", "대상 수상", "수상했다",
+    "수상 쾌거", "선정됐다", "최우수상", "우수상", "대상을 수상", "연속 수상",
+    "공급기업 선정", "지원사업 선정",
+    # 조직·인사
+    "특허 출원", "합작법인", "지분 투자", "임원 선임", "대표 취임",
+    # 지원·홍보 서비스 발표
+    "지원 프로그램", "프로모션 실시", "론칭 프로모션",
 }
+
+# 칼럼·기고·사례연구 마커 — 이 패턴이 제목에 있으면 기획·분석으로 조기 분류
+_COLUMN_MARKER_RE = re.compile(
+    r'\[[^\]]*(?:칼럼|기고|사례연구|보안칼럼|전문가 칼럼|전문가 기고|진단|기술 기고|분석 리포트|특별 기고)[^\]]*\]',
+    re.IGNORECASE,
+)
+# 신간·출간 발표 — 제목 브래킷에 있으면 보도자료형
+_BOOK_ANNOUNCE_RE = re.compile(r'\[(?:신간|출간|신책|추천 도서)\]', re.IGNORECASE)
 _INTERVIEW_WORDS= {"인터뷰","만나다","만났다","대표이사","지사장","임원","강조했다","말했다",
                    "피력했다","밝혔다","설명했다","답했다","주장했다","전했다"}
 _EVENT_WORDS    = {"세미나","컨퍼런스","포럼","파트너데이","간담회","현장","설명회","전시회",
-                   "박람회","이벤트","데모데이","해커톤","서밋","밋업"}
+                   "박람회","이벤트","데모데이","해커톤","서밋","밋업","개막식","총출동"}
 _STOCK_WORDS    = {"급등","급락","주가","종목","매수","매도","투자의견","목표주가",
                    "테마주","관련주","수혜주","상한가","하한가","코스피","코스닥"}
 _AD_WORDS       = {"채용공고","구인","공개채용","쇼핑몰","할인쿠폰","경품이벤트"}
@@ -180,10 +199,26 @@ def classify_article_type(title: str, description: str,
     if any(w in combined for w in _AD_WORDS):
         return "제외 대상"
 
+    title_lower = title.lower()
+
+    # 보도자료 강 신호 체크 — 인터뷰/기획 분류보다 먼저 실행
+    # 제목에 명확한 PR 이벤트 신호가 있으면 즉시 보도자료형 반환
+    has_strong_pr_signal = any(sig in title_lower for sig in _STRONG_PR_TITLE_SIGNALS)
+    if has_strong_pr_signal or _BOOK_ANNOUNCE_RE.search(title):
+        return "보도자료형"
+
+    # 칼럼·기고·사례연구 마커 — 기획·분석 조기 반환
+    if _COLUMN_MARKER_RE.search(title):
+        return "기획·분석"
+
     # 인터뷰 — 따옴표 패턴 또는 2개 이상 단서
+    # 단, 보도자료 PR_WORDS가 2개 이상이거나 제목에 출시/공개가 있으면 따옴표는 제품명·인용으로 간주
+    pr_score = sum(1 for w in _PR_WORDS if w in combined)
     interview_score = sum(1 for w in _INTERVIEW_WORDS if w in combined)
     if '"' in title or '“' in title or '”' in title:
-        interview_score += 2
+        product_ctx = '출시' in title_lower or '공개' in title_lower
+        if pr_score < 2 and not product_ctx:
+            interview_score += 2
     if interview_score >= 2:
         return "인터뷰"
 
@@ -191,18 +226,13 @@ def classify_article_type(title: str, description: str,
     if any(w in combined for w in _EVENT_WORDS):
         return "행사·현장"
 
-    # 보도자료 강 신호 — 제목에 명확한 PR 이벤트가 있으면 기획·분석 불가
-    title_lower = title.lower()
-    has_strong_pr_signal = any(sig in title_lower for sig in _STRONG_PR_TITLE_SIGNALS)
-
     # 기획·분석 — 강한 보도자료 신호 없이, FEATURE_WORDS 3개 이상
-    if not has_strong_pr_signal and sum(1 for w in _FEATURE_WORDS if w in combined) >= 3:
+    if sum(1 for w in _FEATURE_WORDS if w in combined) >= 3:
         return "기획·분석"
 
-    # 보도자료형
-    pr_score = sum(1 for w in _PR_WORDS if w in combined)
-    has_org  = any(w in combined for w in ["㈜", "주식회사", "법인", "대표이사", "대표 ", "사장 "])
-    if has_strong_pr_signal or pr_score >= 2 or (pr_score >= 1 and has_org):
+    # 보도자료형 (약한 신호 조합)
+    has_org = any(w in combined for w in ["㈜", "주식회사", "법인", "대표이사", "대표 ", "사장 "])
+    if pr_score >= 2 or (pr_score >= 1 and has_org):
         return "보도자료형"
 
     return "일반 기사"
