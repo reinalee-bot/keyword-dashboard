@@ -1703,8 +1703,6 @@ with tab4:
                         _rv_status_sel = st.selectbox(
                             "검토 상태",
                             mrs.REVIEW_STATUSES,
-                            index=(mrs.REVIEW_STATUSES.index(st.session_state[_rs_key])
-                                   if st.session_state[_rs_key] in mrs.REVIEW_STATUSES else 0),
                             key=_rs_key)
 
                         _is_pr_candidate = (_rv_status_sel == "PR 후보")
@@ -1712,13 +1710,9 @@ with tab4:
                             _rv_usage_sel = st.selectbox(
                                 "활용 형태",
                                 mrs.USAGE_TYPES,
-                                index=(mrs.USAGE_TYPES.index(st.session_state[_ut_key])
-                                       if st.session_state[_ut_key] in mrs.USAGE_TYPES
-                                       else len(mrs.USAGE_TYPES) - 1),
                                 key=_ut_key)
                             _rv_follow_val = st.text_area(
                                 "후속 확인 사항",
-                                value=st.session_state[_fu_key],
                                 key=_fu_key,
                                 placeholder="예: 현업 인터뷰 필요, 관련 매출 수치 확인",
                                 height=80)
@@ -1728,7 +1722,6 @@ with tab4:
 
                         _rv_memo_val = st.text_area(
                             "담당자 메모",
-                            value=st.session_state[_rm_key],
                             key=_rm_key,
                             placeholder="자유 메모",
                             height=80)
