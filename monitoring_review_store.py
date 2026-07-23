@@ -210,12 +210,11 @@ def _gsheet_upsert(ws, row_data: dict) -> bool:
     try:
         article_id = row_data["article_id"]
         values     = [str(row_data.get(col, "")) for col in REVIEW_COLS]
-
-        try:
-            cell    = ws.find(article_id, in_column=1)
-            row_num = cell.row
-            ws.update(f"A{row_num}:{_COL_END}{row_num}", [values])
-        except gspread.exceptions.CellNotFound:
+        cell = ws.find(article_id, in_column=1)
+        if cell is not None:
+            # gspread 6.x: update(values, range_name) — 인자 순서 주의
+            ws.update([values], f"A{cell.row}:{_COL_END}{cell.row}")
+        else:
             ws.append_row(values, value_input_option="RAW")
         return True
     except Exception as exc:
@@ -227,10 +226,10 @@ def _gsheet_delete(ws, article_id: str) -> bool:
     """Google Sheets에서 article_id 행 삭제. 성공 시 True."""
     try:
         cell = ws.find(article_id, in_column=1)
+        if cell is None:
+            return False
         ws.delete_rows(cell.row)
         return True
-    except gspread.exceptions.CellNotFound:
-        return False
     except Exception as exc:
         _log.warning("Google Sheets 삭제 실패 [%s]", type(exc).__name__)
         return False
