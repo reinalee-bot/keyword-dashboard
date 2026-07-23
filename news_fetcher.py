@@ -309,6 +309,152 @@ def classify_article_type(title: str, description: str,
 
 
 # ══════════════════════════════════════════════════════════
+# P5A: article_type(4종) + promotional_likelihood(3단계) 독립 판정
+# ══════════════════════════════════════════════════════════
+
+def determine_promotional_likelihood(title: str, description: str) -> str:
+    """홍보 활용 가능성 판정.
+
+    반환: "높음" / "보통" / "낮음"
+
+    판정 순서:
+      ① 강한 PR 신호(_STRONG_PR_TITLE_SIGNALS) 또는 [신간/출간] 브래킷 → 높음
+      ② P2 복합 규칙 발동 → 높음
+      ③ PR 단어(_PR_WORDS) 합산 ≥ 2 → 높음
+      ④ PR 단어 = 1 AND 기관 표현(㈜/주식회사/대표이사 등) → 높음
+      ⑤ PR 단어 = 1 → 보통
+      ⑥ 기본값 → 낮음
+    """
+    combined    = (title + " " + description).lower()
+    title_lower = title.lower()
+
+    if (any(sig in title_lower for sig in _STRONG_PR_TITLE_SIGNALS)
+            or _BOOK_ANNOUNCE_RE.search(title)):
+        return "높음"
+
+    if get_compound_pr_rules_fired(title):
+        return "높음"
+
+    pr_score = sum(1 for w in _PR_WORDS if w in combined)
+    has_org  = any(w in combined for w in ["㈜", "주식회사", "법인", "대표이사", "대표 ", "사장 "])
+
+    if pr_score >= 2:
+        return "높음"
+    if pr_score >= 1 and has_org:
+        return "높음"
+    if pr_score >= 1:
+        return "보통"
+    return "낮음"
+
+
+def classify_article_extended(
+    title: str, description: str,
+    media_name: str = "", url: str = "",
+) -> dict:
+    """article_type(4종) + promotional_likelihood(3단계) 독립 판정.
+
+    기존 classify_article_type()의 시그니처·반환 타입(str)은 변경하지 않는다.
+    이 함수는 분리된 판정 근거를 포함한 dict를 반환한다.
+
+    반환 키:
+      article_type           : "기획·분석" / "인터뷰" / "행사·현장" / "일반 기사" / "제외 대상"
+                               (P5A: "보도자료형" 없음)
+      promotional_likelihood : "높음" / "보통" / "낮음"
+      title_signal           : 제목에서 발동한 PR 신호 (없으면 "")
+      description_signal     : 설명에서만 기여한 PR 단어 (없으면 "")
+      matched_rule           : P2 규칙 이름 쉼표 오름차순 (없으면 "")
+      promotional_score      : title+description 합산 PR 단어 수 (int)
+      classification_basis   : "title_only" | "title_and_description"
+    """
+    combined    = (title + " " + description).lower()
+    title_lower = title.lower()
+    basis       = "title_only" if not description.strip() else "title_and_description"
+
+    # ── article_type 판정 (4종 + 제외 대상) ─────────────────────────────
+    # 설계 원칙: P2 복합 규칙은 promotional_likelihood 에만 기여하고
+    #            article_type 판정 경로에는 개입하지 않는다.
+
+    if sum(1 for w in _STOCK_WORDS if w in combined) >= 2:
+        article_type = "제외 대상"
+    elif any(w in combined for w in _AD_WORDS):
+        article_type = "제외 대상"
+    elif _COLUMN_MARKER_RE.search(title):
+        article_type = "기획·분석"
+    else:
+        pr_score_type   = sum(1 for w in _PR_WORDS if w in combined)
+        interview_score = sum(1 for w in _INTERVIEW_WORDS if w in combined)
+        # 따옴표 인터뷰 발언 보너스 — 제품명/출시 맥락이면 배제
+        # (PR 단어 수로는 더 이상 게이팅하지 않아 PR+인터뷰 혼합 기사 식별 가능)
+        if _P2_QUOTE_RE.search(title):
+            product_ctx = "출시" in title_lower or "공개" in title_lower
+            if not product_ctx:
+                interview_score += 2
+        if interview_score >= 2:
+            article_type = "인터뷰"
+        elif any(w in combined for w in _EVENT_WORDS):
+            article_type = "행사·현장"
+        elif sum(1 for w in _FEATURE_WORDS if w in combined) >= 3:
+            article_type = "기획·분석"
+        else:
+            article_type = "일반 기사"
+
+    # ── promotional_likelihood 판정 ──────────────────────────────────────
+    has_strong = any(sig in title_lower for sig in _STRONG_PR_TITLE_SIGNALS)
+    book_m     = _BOOK_ANNOUNCE_RE.search(title)
+    p2_rules   = get_compound_pr_rules_fired(title)
+    matched_rule  = ",".join(sorted(p2_rules)) if p2_rules else ""
+    promotional_score = sum(1 for w in _PR_WORDS if w in combined)
+    has_org = any(w in combined for w in ["㈜", "주식회사", "법인", "대표이사", "대표 ", "사장 "])
+
+    # title_signal: 가장 긴 강한 PR 신호 → 신간 브래킷 → 제목 내 PR 단어 순
+    title_signal = ""
+    if has_strong:
+        for sig in sorted(_STRONG_PR_TITLE_SIGNALS, key=len, reverse=True):
+            if sig in title_lower:
+                title_signal = sig
+                break
+    elif book_m:
+        title_signal = book_m.group(0)
+    else:
+        for w in sorted(_PR_WORDS):
+            if w in title_lower:
+                title_signal = w
+                break
+
+    # description_signal: description 에만 있는 PR 단어
+    description_signal = ""
+    if description.strip():
+        desc_lower = description.lower()
+        for w in sorted(_PR_WORDS):
+            if w in desc_lower and w not in title_lower:
+                description_signal = w
+                break
+
+    if has_strong or book_m:
+        promotional_likelihood = "높음"
+    elif p2_rules:
+        promotional_likelihood = "높음"
+    elif promotional_score >= 2:
+        promotional_likelihood = "높음"
+    elif promotional_score >= 1 and has_org:
+        promotional_likelihood = "높음"
+    elif promotional_score >= 1:
+        promotional_likelihood = "보통"
+    else:
+        promotional_likelihood = "낮음"
+
+    return {
+        "article_type":           article_type,
+        "promotional_likelihood": promotional_likelihood,
+        "title_signal":           title_signal,
+        "description_signal":     description_signal,
+        "matched_rule":           matched_rule,
+        "promotional_score":      promotional_score,
+        "classification_basis":   basis,
+    }
+
+
+# ══════════════════════════════════════════════════════════
 # 저품질 기사 필터
 # ══════════════════════════════════════════════════════════
 def is_low_quality(article: dict, media_config: dict) -> tuple:
