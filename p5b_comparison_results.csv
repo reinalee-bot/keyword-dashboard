@@ -1,0 +1,46 @@
+﻿display_no,idx,title,expected_type,old_type,ext_article_type,promotional_likelihood,matched_rule,promotional_score,classification_basis,title_signal,description_signal,old_correct,old_changed_from_expected,pr_expected_high,pr_got_high
+#01,0,"니어솔루션, '2026 AI Korea 대전' 3년 연속 수상...WES 넘어 피지컬 AI로",보도자료형,보도자료형,일반 기사,높음,,0,title_only,연속 수상,,True,False,True,True
+#02,1,"ARC리서치 ""나무기술, 구독 매출 비중 확대""",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#03,2,"삼성전자, 대표 직속 'RX사업추진실' 출범...세계 최고 '로봇 손' 탄생하...",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#04,3,"고성능 '프로' 대신 효율… 구글, '제미나이 플래시' 3종 공개",보도자료형,보도자료형,일반 기사,높음,P2c,1,title_only,공개,,True,False,True,True
+#05,4,"구글, 제미나이 '프로' 없이 '플래시' 모델들만 출시...'가성비' 전략",일반 기사,일반 기사,일반 기사,보통,,1,title_only,출시,,True,False,False,False
+#06,5,"[신간] 황영오 박사 'AX 에이전트 경영', 한 달 만에 2쇄 돌입",보도자료형,보도자료형,일반 기사,높음,,0,title_only,[신간],,True,False,True,True
+#07,6,"웹케시, ‘IBK 디지털뱅킹 리빌딩 1단계’ 사업 공급계약",보도자료형,보도자료형,일반 기사,높음,,2,title_only,공급계약,,True,False,True,True
+#08,7,[박나룡 보안칼럼] 외교부 해킹이 드러낸 국가 보안의 민낯,기획·분석,기획·분석,기획·분석,낮음,,0,title_only,,,True,False,False,False
+#09,8,"""해킹 공격자들은 늘 같은 곳을 노린다""...기업이 꼭 지켜야 할 보안 수...",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#10,9,"해킹은 진화하는데 방어 체계는 여전...KISA ""공격 동선 따라 보안체계...",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#11,10,"AI가 AI를 공격하는 시대, 'AI 하네스' 세대교체 진행중",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#12,11,"SGA솔루션즈, 호남 중소기업 PC 보안 지원…악성코드·패치 관리 제공",보도자료형,보도자료형,일반 기사,높음,P2a,0,title_only,,,True,False,True,True
+#13,12,"AI가 AI를 해킹했다…허깅페이스, 자율 AI 에이전트 공격 받아",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#14,13,"[사례연구] 금융 A사, 시큐아이 MDR 서비스로 보안 체계 고도화",기획·분석,기획·분석,기획·분석,낮음,,0,title_only,,,True,False,False,False
+#15,14,"한국타이어, AI 상담 서비스 ‘티봇’ 론칭 프로모션",보도자료형,보도자료형,일반 기사,높음,,1,title_only,론칭 프로모션,,True,False,True,True
+#16,15,"충주시, 제조 AX 거점 조성 피지컬AI 생태계 초석 다져",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#17,16,"카카오엔터프라이즈, 이재한 신임 대표 내정…이원주 대표 사퇴",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#18,17,부울경 수출기업 만난 윤진식 회장 “美 비자 개선 계속 건의”,인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#19,18,"윤진식 무협 회장 ""美 비자 개선·AX 전환 지원 강화""…부울경 수출기업...",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#20,19,"중기중앙회, '2026년 제1차 식품산업위원회' 개최",보도자료형,보도자료형,일반 기사,높음,P2b,1,title_only,개최,,True,False,True,True
+#21,20,"'K-디스플레이 2026' 개막…삼성·LG 총출동, AI 품은 OLED 한곳에",행사·현장,행사·현장,행사·현장,낮음,,0,title_only,,,True,False,False,False
+#22,21,"삼성디스플레이, AI 비전 'O.P.E.N.' 공개… ""엔비디아 협력해 자율공장...",인터뷰,보도자료형,일반 기사,높음,,2,title_only,공개,,False,True,False,True
+#23,22,"[보안 칼럼] AI를 빠르게 도입할수록, 아무것도 믿지 말아야 하는 이유",기획·분석,기획·분석,기획·분석,보통,,1,title_only,도입,,True,False,False,False
+#24,23,"구글도 사이버 보안 전용 모델 첫 출시...""미소스의 가성비 대안""",인터뷰,일반 기사,일반 기사,보통,,1,title_only,출시,,False,True,False,False
+#25,24,"아이티언, '인그레스 투 엔지에프' 선봬…NGINX 인그레스 종료 대응 지원",보도자료형,보도자료형,일반 기사,높음,,0,title_only,선봬,,True,False,True,True
+#26,25,"AI스페라, '크리미널 IP' PCI DSS 최고 등급 4년 연속 인증 유지",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#27,26,"구글, 제미나이 경량모델 3종 출시···'프로'는 미공개",보도자료형,보도자료형,일반 기사,높음,,2,title_only,공개,,True,False,True,True
+#28,27,"휴네시온, N2SF·SBOM 사업 잇달아 참여…공공 보안 레퍼런스 확대",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#29,28,[Global Security TOP 100] 이동범 지니언스 대표 “국민훈장 영광 동시에...,인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#30,29,"클루커스, Straiker와 전략적 파트너십 체결…국내 에이전틱 AI 보안 시장...",보도자료형,보도자료형,일반 기사,높음,,2,title_only,전략적 파트너십,,True,False,True,True
+#31,30,"인엠스, '엑시오 VPN Edge·Axio VPN Server' 조달청 등록…”김승태 부사...",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#32,31,"인엠스, '엑시오 VPN Edge·Axio VPN Server' 조달등록 완료",보도자료형,보도자료형,일반 기사,높음,,0,title_only,조달등록,,True,False,True,True
+#33,32,"RSA, 생성형 AI 보안 위협 대응 위한 'RSA ID Plus' 패스워드리스 인증 강...",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#34,33,"KT, 18조 투자 'AX 플랫폼 기업' 대 전환. AI 데이터센터 용량 대폭 확충",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#35,34,"RSA, AI 업무 환경 겨냥 'RSA ID Plus' 패스워드리스 인증 솔루션 제안",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#36,35,"시큐리티플랫폼, 제로트러스트 영상보안으로 공공시장 공략 확대",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#37,36,'휴먼 코드' 고른 정재헌 CEO...사람·조직에서 시작한 SKT의 AI 전환,일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#38,37,"KDI ""10년후 AI로 年일자리 25.6만개 감소…개인 매출은 20% 향상""",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#39,38,HD현대 AI 전략 가속…조선소에서 항로까지 연결,일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False
+#40,39,"""AI 도입으로 10년 후 일자리 연간 25만개 이상 감소""...KDI, 전문직 사무...",인터뷰,인터뷰,인터뷰,보통,,1,title_only,도입,,True,False,False,False
+#41,40,"김용범 ""AI는 이제 기본권...현금 나누는 복지 아니야""",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#42,41,"KDI ""AI로 10년 뒤 일자리 25.6만 개 감소...생산성은 향상""",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#43,42,"AI가 캠페인 기획·발송까지… 인비토, ‘한국형 Braze’ 한줄로AI 출시",보도자료형,보도자료형,일반 기사,높음,P2d,1,title_only,출시,,True,False,True,True
+#44,43,"KDI ""AI 확산 10년 뒤 연간 일자리 25.6만개 감소…생산성은 향상""",인터뷰,인터뷰,인터뷰,낮음,,0,title_only,,,True,False,False,False
+#45,44,"미래에셋생명, 공덕시대 개막… '한국형 버크셔 해서웨이' 전략 속도낸...",일반 기사,일반 기사,일반 기사,낮음,,0,title_only,,,True,False,False,False

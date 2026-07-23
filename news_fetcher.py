@@ -383,9 +383,10 @@ def classify_article_extended(
     else:
         pr_score_type   = sum(1 for w in _PR_WORDS if w in combined)
         interview_score = sum(1 for w in _INTERVIEW_WORDS if w in combined)
-        # 따옴표 인터뷰 발언 보너스 — 제품명/출시 맥락이면 배제
-        # (PR 단어 수로는 더 이상 게이팅하지 않아 PR+인터뷰 혼합 기사 식별 가능)
-        if _P2_QUOTE_RE.search(title):
+        # 따옴표 인터뷰 발언 보너스 — 쌍따옴표(발언)만 검사, 단따옴표(행사명/제품명) 제외
+        # 원본 classify_article_type() 과 동일한 문자 집합 사용: " U+0022 / " U+201C / " U+201D
+        # PR 단어 수 게이팅 없음 → PR+인터뷰 혼합 기사 식별 가능
+        if '"' in title or '“' in title or '”' in title:
             product_ctx = "출시" in title_lower or "공개" in title_lower
             if not product_ctx:
                 interview_score += 2
@@ -452,6 +453,38 @@ def classify_article_extended(
         "promotional_score":      promotional_score,
         "classification_basis":   basis,
     }
+
+
+# ══════════════════════════════════════════════════════════
+# P5B: Shadow 모드 런타임 통합
+# ══════════════════════════════════════════════════════════
+
+#: 이 플래그가 True인 경우 fetch_articles_for_keyword() 루프 내부에서
+#: enrich_article_extended()를 호출해 _ext_* 필드를 art dict에 부가한다.
+#: False(기본값)일 때는 기존 동작과 완전히 동일하다.
+#: REVIEW_COLS에 포함되지 않으므로 CSV·Sheets 저장 경로에 진입하지 않는다.
+_EXTENDED_SHADOW: bool = False
+
+
+def enrich_article_extended(art: dict) -> None:
+    """classify_article_extended() 결과를 _ext_* 키로 art dict에 추가한다.
+
+    기존 art["article_type"] 등 원본 필드는 변경하지 않는다.
+    모든 _ext_* 키는 REVIEW_COLS 외부에 위치하며 저장되지 않는다.
+    """
+    r = classify_article_extended(
+        art.get("title", ""),
+        art.get("description", ""),
+        art.get("media_name", ""),
+        art.get("url", ""),
+    )
+    art["_ext_article_type"]           = r["article_type"]
+    art["_ext_promotional_likelihood"] = r["promotional_likelihood"]
+    art["_ext_title_signal"]           = r["title_signal"]
+    art["_ext_description_signal"]     = r["description_signal"]
+    art["_ext_matched_rule"]           = r["matched_rule"]
+    art["_ext_promotional_score"]      = r["promotional_score"]
+    art["_ext_classification_basis"]   = r["classification_basis"]
 
 
 # ══════════════════════════════════════════════════════════
@@ -706,6 +739,8 @@ def fetch_articles_for_keyword(
 
         # 기사 유형 분류
         art["article_type"] = classify_article_type(_title, _desc, _mname, _url)
+        if _EXTENDED_SHADOW:
+            enrich_article_extended(art)
         if art["article_type"] == "제외 대상":
             art["_filter_reason"] = "classified_exclude"
             continue
