@@ -2,128 +2,135 @@
 chcp 65001 > nul
 cd /d "%~dp0"
 
+:: ============================================================
+:: keyword-dashboard  update.bat
+:: Pull latest code from GitHub, verify deps, restart Streamlit
+:: ============================================================
+
+set "PORT=8501"
+set "PYTHON=C:\Users\이선호(reinalee)\AppData\Local\Python\pythoncore-3.14-64\python.exe"
+set "DASHBOARD=dashboard.py"
+set "REMOTE=origin"
+set "BRANCH=main"
+
 echo.
-echo ======================================
-echo  키워드 대시보드 - 업데이트 Push
-echo ======================================
+echo ============================================================
+echo  keyword-dashboard  -  Update and Restart
+echo ============================================================
 echo.
 
-:: 원격 최신 변경사항 먼저 가져오기
-echo [PRE] 원격 변경사항 확인 중...
-git fetch origin main 2>nul
-if errorlevel 1 (
-    echo.
-    echo [WARNING] 원격 서버 연결 실패. 인터넷/VPN 연결을 확인하세요.
-    echo  로컬 커밋만 진행합니다.
-    echo.
-)
+:: ── Current state ───────────────────────────────────────────
+echo [INFO] Current branch:
+git branch --show-current
+echo.
+echo [INFO] HEAD before update:
+git log -1 --oneline
+set HEAD_BEFORE=
+for /f "tokens=*" %%a in ('git log -1 --format^=%%h') do set HEAD_BEFORE=%%a
+echo.
 
-:: 로컬에 스테이징할 변경사항 확인
+:: ── Guard: uncommitted local changes ────────────────────────
 git diff --quiet 2>nul
-git diff --cached --quiet 2>nul
-git status --porcelain > "%TEMP%\kd_status.txt" 2>nul
-
-for %%f in ("%TEMP%\kd_status.txt") do (
-    if %%~zf == 0 (
-        echo ============================================================
-        echo  [INFO] 변경된 파일이 없습니다. 이미 최신 상태입니다.
-        echo ============================================================
-        del "%TEMP%\kd_status.txt" 2>nul
-        goto :PUSH_ONLY
-    )
+if errorlevel 1 (
+    echo [WARNING] Uncommitted local changes detected.
+    echo  Run  git status  to review.
+    echo  Commit or stash changes, then re-run update.bat.
+    goto :FAIL
 )
-del "%TEMP%\kd_status.txt" 2>nul
+git diff --cached --quiet 2>nul
+if errorlevel 1 (
+    echo [WARNING] Staged but uncommitted changes detected.
+    echo  Commit or reset staged changes, then re-run.
+    goto :FAIL
+)
 
-:: 날짜 생성
-for /f "tokens=*" %%a in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd_HHmm"') do set DATETIME=%%a
-set COMMIT_MSG=Data update %DATETIME%
-echo Commit: %COMMIT_MSG%
+:: ── 1/4  Fetch ──────────────────────────────────────────────
+echo [1/4] Fetching from %REMOTE%/%BRANCH% ...
+git fetch %REMOTE% %BRANCH% 2>&1
+if errorlevel 1 (
+    echo [WARNING] git fetch failed. Check internet / VPN.
+    echo  Continuing with local code only.
+)
 echo.
 
-:: 스테이징
-echo [1/3] 변경 파일 스테이징 중...
-git add -A
+:: ── 2/4  Pull (fast-forward only) ───────────────────────────
+echo [2/4] Pulling (fast-forward only) ...
+git pull --ff-only %REMOTE% %BRANCH% 2>&1
 if errorlevel 1 (
     echo.
-    echo [ERROR] git add 실패. Git이 설치되어 있는지 확인하세요.
+    echo [ERROR] Pull failed - not a fast-forward or conflict.
+    echo  Resolve manually:  git status / git log
+    echo  Do NOT use git reset --hard without reviewing changes.
     goto :FAIL
 )
-
-echo 스테이징된 파일:
-git diff --cached --name-only
 echo.
 
-:: 스테이징 후 재확인
-git diff --cached --quiet 2>nul
-if not errorlevel 1 (
-    echo ============================================================
-    echo  [INFO] 스테이징된 변경사항이 없습니다.
-    echo ============================================================
-    goto :PUSH_ONLY
-)
+echo [INFO] HEAD after update:
+git log -1 --oneline
+echo.
 
-:: 커밋
-echo [2/3] 커밋 생성 중...
-git commit -m "%COMMIT_MSG%"
+:: ── ba190d3 check ───────────────────────────────────────────
+git merge-base --is-ancestor ba190d3 HEAD 2>nul
 if errorlevel 1 (
-    echo.
-    echo [ERROR] 커밋 실패.
-    goto :FAIL
+    echo [INFO] ba190d3 is NOT in current history.
+) else (
+    echo [INFO] ba190d3 confirmed in current history.
 )
+echo.
 
-:PUSH_ONLY
-:: 원격과 비교해서 push할 커밋이 있는지 확인
-git log origin/main..HEAD --oneline > "%TEMP%\kd_ahead.txt" 2>nul
-for %%f in ("%TEMP%\kd_ahead.txt") do (
-    if %%~zf == 0 (
-        echo ============================================================
-        echo  [INFO] 이미 원격과 동기화되어 있습니다. Push 불필요.
-        echo ============================================================
-        del "%TEMP%\kd_ahead.txt" 2>nul
-        goto :END
+:: ── 3/4  Dependencies ───────────────────────────────────────
+echo [3/4] Checking dependencies ...
+if exist requirements.txt (
+    "%PYTHON%" -m pip install -r requirements.txt -q 2>&1
+    if errorlevel 1 (
+        echo [WARNING] pip install reported errors - check requirements.txt
+    ) else (
+        echo  Dependencies OK.
     )
+) else (
+    echo  requirements.txt not found - skipping.
 )
-del "%TEMP%\kd_ahead.txt" 2>nul
+echo.
 
-:: Pull --rebase 후 Push
-echo [3/3] GitHub에 업로드 중...
-git pull --rebase origin main 2>&1
+:: ── Syntax check ────────────────────────────────────────────
+echo [CHECK] Verifying %DASHBOARD% syntax ...
+"%PYTHON%" -m py_compile %DASHBOARD% 2>&1
 if errorlevel 1 (
-    echo.
-    echo ============================================================
-    echo  [ERROR] Pull 중 충돌 발생.
-    echo  git rebase --abort 실행 후 수동으로 해결하세요.
-    echo ============================================================
+    echo [ERROR] SyntaxError in %DASHBOARD% - aborting restart.
     goto :FAIL
 )
+echo  %DASHBOARD% OK.
+echo.
 
-git push origin main
-set PUSH_RESULT=%errorlevel%
-
-if %PUSH_RESULT% neq 0 (
-    echo.
-    echo ============================================================
-    echo  [ERROR] Push 실패 (오류코드: %PUSH_RESULT%)
-    echo.
-    echo  주요 원인:
-    echo   1) 인터넷/VPN 연결 확인
-    echo   2) 현재 브랜치 확인: git branch
-    echo   3) 권한 오류: GitHub 인증 확인
-    echo ============================================================
-    goto :FAIL
+:: ── 4/4  Restart Streamlit ──────────────────────────────────
+echo [4/4] Restarting Streamlit on port %PORT% ...
+for /f "tokens=5" %%a in ('netstat -aon 2^>nul ^| findstr ":%PORT% " ^| findstr LISTENING') do (
+    echo  Stopping PID %%a on port %PORT% ...
+    taskkill /f /pid %%a >nul 2>&1
 )
+timeout /t 2 /nobreak >nul
+
+start "" "%PYTHON%" -m streamlit run %DASHBOARD% --server.port %PORT% --server.headless true --browser.gatherUsageStats false
+timeout /t 4 /nobreak >nul
 
 echo.
 echo ============================================================
-echo  [SUCCESS] 업로드 완료!
-echo  Streamlit Cloud가 2~5분 내 자동 재배포됩니다.
-echo  대시보드에서 F5를 눌러 새로고침하세요.
+echo  Update complete!
+echo  Branch : %BRANCH%
+echo  Before : %HEAD_BEFORE%
+echo  After  :
+git log -1 --format="  %%h  %%s"
+echo  Port   : %PORT%
+echo  URL    : http://localhost:%PORT%
 echo ============================================================
+echo.
+start "" "http://localhost:%PORT%"
 goto :END
 
 :FAIL
 echo.
-echo  문제가 지속되면 커뮤니케이션팀에 문의하세요.
+echo  [FAIL] Update aborted. No code changes or restarts applied.
+echo.
 
 :END
 echo.
