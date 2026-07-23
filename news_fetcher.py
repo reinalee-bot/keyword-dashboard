@@ -82,6 +82,22 @@ _BLOG_DOMAINS   = {"blog.naver.com","cafe.naver.com","post.naver.com",
                    "tistory.com","brunch.co.kr","medium.com","velog.io",
                    "blog.daum.net","blog.kakao.com"}
 
+# ── P2 복합 규칙 패턴 (보도자료형 보조 판정) ─────────────────────────
+# 기업·기관명(한글·영숫자·괄호, 2자 이상) + 쉼표 + 공백 — 제목 시작 한정
+_P2_COMPANY_START_RE = re.compile(r'^[가-힣A-Za-z0-9\(\)·\-&]{2,}[,，]\s')
+# N종 / 제N차 / N단계 회차 표현
+_P2_NUM_ANNOUNCE_RE  = re.compile(r'\d+종|제\d+차|\d+단계')
+# P2c 제외어 — 전략 분석 해설 등 보도자료가 아닌 문맥
+_P2C_EXCLUDE_RE      = re.compile(r'전략|없이|방안|계획|전망|분석|해설')
+# '미공개'의 '공개'를 제외한 단독 '공개' (부정 전방 탐색)
+_P2C_REVEAL_RE       = re.compile(r'(?<!미)공개')
+# 한·영 단따옴표·쌍따옴표로 묶인 2-25자 텍스트
+_P2_QUOTE_RE         = re.compile(
+    r'[‘’“”\'\"]'
+    r'[^‘’“”\'\"]{2,25}'
+    r'[‘’“”\'\"]'
+)
+
 
 # ══════════════════════════════════════════════════════════
 # 매체 화이트리스트
@@ -184,6 +200,55 @@ def _guess_media_name(domain: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════
+# P2 복합 규칙 — 보도자료형 보조 판정 (title-only 환경용)
+# ══════════════════════════════════════════════════════════
+def _check_p2a(title: str) -> bool:
+    """P2a: 제목 시작 기업·기관명, + '지원' AND '제공' → 지원 제공형 보도자료"""
+    if not _P2_COMPANY_START_RE.match(title):
+        return False
+    company = title.split(",")[0].strip()
+    return len(company) >= 2 and "지원" in title and "제공" in title
+
+
+def _check_p2b(title: str) -> bool:
+    """P2b: 제목 시작 기업·기관명, + '개최' + (회차 표현 OR 따옴표 행사명) → 행사 개최 보도자료"""
+    if not _P2_COMPANY_START_RE.match(title) or "개최" not in title:
+        return False
+    company = title.split(",")[0].strip()
+    if len(company) < 2:
+        return False
+    return bool(_P2_NUM_ANNOUNCE_RE.search(title)) or bool(_P2_QUOTE_RE.search(title))
+
+
+def _check_p2c(title: str) -> bool:
+    """P2c: N종/제N차/N단계 + 단독 '공개' (미공개 제외) + 전략·방안 등 제외 → 제품 공개 보도자료"""
+    return (
+        bool(_P2_NUM_ANNOUNCE_RE.search(title))
+        and bool(_P2C_REVEAL_RE.search(title))
+        and not bool(_P2C_EXCLUDE_RE.search(title))
+    )
+
+
+def _check_p2d(title: str) -> bool:
+    """P2d: 제목 중간 기업명+쉼표 + 따옴표 제품명 + 제목 말미 '출시' → 신제품 출시 보도자료"""
+    if not re.search(r'[가-힣A-Za-z0-9]+,\s', title):
+        return False
+    if not _P2_QUOTE_RE.search(title):
+        return False
+    return "출시" in title[-12:]
+
+
+def get_compound_pr_rules_fired(title: str) -> set:
+    """발동된 P2 복합 규칙 이름 집합 반환. 빈 집합이면 미발동."""
+    fired: set = set()
+    if _check_p2a(title): fired.add("P2a")
+    if _check_p2b(title): fired.add("P2b")
+    if _check_p2c(title): fired.add("P2c")
+    if _check_p2d(title): fired.add("P2d")
+    return fired
+
+
+# ══════════════════════════════════════════════════════════
 # 기사 유형 분류
 # ══════════════════════════════════════════════════════════
 def classify_article_type(title: str, description: str,
@@ -210,6 +275,11 @@ def classify_article_type(title: str, description: str,
     # 칼럼·기고·사례연구 마커 — 기획·분석 조기 반환
     if _COLUMN_MARKER_RE.search(title):
         return "기획·분석"
+
+    # P2 복합 규칙 — 기업·기관 발표 복합 패턴 (title-only 보조 판정)
+    # 강한 PR 신호와 칼럼 마커 체크 후 실행하여 기획·분석 기사 오분류 방지
+    if get_compound_pr_rules_fired(title):
+        return "보도자료형"
 
     # 인터뷰 — 따옴표 패턴 또는 2개 이상 단서
     # 단, 보도자료 PR_WORDS가 2개 이상이거나 제목에 출시/공개가 있으면 따옴표는 제품명·인용으로 간주
