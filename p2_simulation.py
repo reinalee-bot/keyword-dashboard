@@ -91,12 +91,13 @@ EXPECTED = {
    40:"인터뷰",  41:"인터뷰",   42:"보도자료형",43:"인터뷰",   44:"일반 기사",
 }
 
-# 동일 발표 클러스터
+# 동일 발표 클러스터 (0-based dataset_index 기준)
+# display_no(1-based) 대응: inaims=#31/#32, kdi=#38/#40/#41/#42/#44
 CLUSTERS = {
     30:"cluster_inaims_procurement", 31:"cluster_inaims_procurement",
-    38:"cluster_kdi_ai_employment",  40:"cluster_kdi_ai_employment",
-    41:"cluster_kdi_ai_employment",  42:"cluster_kdi_ai_employment",
-    44:"cluster_kdi_ai_employment",
+    37:"cluster_kdi_ai_employment",  39:"cluster_kdi_ai_employment",
+    40:"cluster_kdi_ai_employment",  41:"cluster_kdi_ai_employment",
+    43:"cluster_kdi_ai_employment",
 }
 
 TYPES = ["보도자료형","기획·분석","인터뷰","행사·현장","일반 기사"]
@@ -117,7 +118,8 @@ for i, art in enumerate(ARTS):
     pred_after   = classify_with_p2(title, "")        # P2 통합 현행 결과
 
     rows.append({
-        "idx":                   i,
+        "dataset_index":         i,
+        "display_no":            i + 1,
         "article_id":            article_id(art),
         "title":                 title,
         "media":                 art["media"],
@@ -135,7 +137,7 @@ for i, art in enumerate(ARTS):
 # ── CSV 저장 ─────────────────────────────────────────────────
 CSV_PATH = BASE + "p2_simulation_results.csv"
 FIELDNAMES = [
-    "idx","article_id","title","media","pub_date","keyword","cluster",
+    "dataset_index","display_no","article_id","title","media","pub_date","keyword","cluster",
     "expected_type","current_prediction","triggered_rule",
     "prediction_after_rule","correct_before","correct_after",
 ]
@@ -187,7 +189,7 @@ for r in rows:
     if not r["triggered_rule"]:
         continue
     for rname in r["triggered_rule"].split("+"):
-        rule_used[rname].append(r["idx"])
+        rule_used[rname].append(r["dataset_index"])
         if r["expected_type"] == "보도자료형":
             rule_tp[rname] += 1
         else:
@@ -262,11 +264,11 @@ W("")
 
 W("## 규칙별 발동 결과")
 W("")
-W(f"| 규칙 | 추가 TP | 신규 FP | 발동 기사 idx |")
-W(f"|------|---------|---------|--------------|")
+W(f"| 규칙 | 추가 TP | 신규 FP | 발동 기사 (display_no, 1-based) |")
+W(f"|------|---------|---------|-------------------------------|")
 for rname in ["P2a","P2b","P2c","P2d"]:
-    idxs = rule_used.get(rname, [])
-    W(f"| {rname} | {rule_tp[rname]} | {rule_fp[rname]} | {idxs} |")
+    dnos = [f"#{i+1:02d}" for i in rule_used.get(rname, [])]
+    W(f"| {rname} | {rule_tp[rname]} | {rule_fp[rname]} | {dnos} |")
 W("")
 W(f"**P2 규칙에 의한 신규 FP 합계: {len(new_fps)}건**")
 W("")
@@ -282,7 +284,7 @@ for r in rows:
         mark = "⚠ FP"
     else:
         mark = "TP(기존)"
-    W(f"- **#{r['idx']:02d}** [{r['triggered_rule']}] {mark}")
+    W(f"- **#{r['display_no']:02d}** (dataset_index={r['dataset_index']}) [{r['triggered_rule']}] {mark}")
     W(f"  제목: {r['title']}")
     W(f"  기대={r['expected_type']} / 기준선={r['current_prediction']} / 적용후={r['prediction_after_rule']}")
     W("")
@@ -290,25 +292,29 @@ for r in rows:
 W("## 남은 오분류 목록")
 W("")
 if remaining_wrong:
-    W(f"| idx | 기대 | 예측 | 오류 원인 | 제목 |")
-    W(f"|-----|------|------|-----------|------|")
+    W(f"| display_no | dataset_index | 기대 | 예측 | 오류 원인 | 제목 |")
+    W(f"|-----------|--------------|------|------|-----------|------|")
     for r in remaining_wrong:
         cause = "기존 FP" if r["correct_before"]=="N" else "P2 신규 FP"
-        W(f"| #{r['idx']:02d} | {r['expected_type']} | {r['prediction_after_rule']} | {cause} | {r['title'][:55]} |")
+        W(f"| #{r['display_no']:02d} | {r['dataset_index']} | {r['expected_type']} | {r['prediction_after_rule']} | {cause} | {r['title'][:55]} |")
 else:
     W("없음 (전체 45건 정확)")
 W("")
 
 W("## 동일 발표 클러스터")
 W("")
-W("| 클러스터 | 포함 기사 | 비고 |")
-W("|---------|-----------|------|")
-W("| cluster_inaims_procurement | #30, #31 | #30 인터뷰(부사장 발언) vs #31 보도자료형(알림) — 유형 다름, 모두 유효 샘플 |")
-W("| cluster_kdi_ai_employment  | #38, #40, #41, #42, #44 | KDI 보고서 복수 매체 보도 |")
+W("> **번호 표기**: 이 섹션의 기사 번호는 모두 display_no(1-based)를 사용한다.")
+W("> dataset_index(0-based) = display_no − 1.")
+W("")
+W("| 클러스터 | 포함 기사 (display_no) | 비고 |")
+W("|---------|----------------------|------|")
+W("| cluster_inaims_procurement | #31, #32 | #31 인터뷰(THEPOWERNEWS·부사장 발언) vs #32 보도자료형(E2NEWS·알림) — 동일 이벤트, 유형 다름 |")
+W("| cluster_kdi_ai_employment  | #38, #40, #41, #42, #44 | KDI AI 일자리 보고서 복수 매체 보도 (서울경제·비욘드포스트·이코노빌·YTN·TJB) |")
 W("")
 W("**URL 정규화 기준 중복**: 0건  ")
-W("**#09/#10**: 동일 매체(TECHM) 다른 기사(idxno 달라) — 클러스터 없음  ")
-W("**#31/#32**: 기사 번호 상 인접하나, #31=THEPOWERNEWS·#32=E2NEWS — 동일 발표 다른 매체, cluster_inaims_procurement")
+W("**#09/#10 (display_no)**: 동일 매체(TECHM) idxno=153568 vs 153562 — 별개 기사, 클러스터 없음  ")
+W("**#31/#32 (display_no)**: 인엠스 VPN 조달등록, THEPOWERNEWS·E2NEWS — 동일 발표 다른 매체, cluster_inaims_procurement ✓  ")
+W("**#42/#44 (display_no)**: KDI AI 일자리 보고서, YTN vs TJB — 동일 보고서 다른 매체, cluster_kdi_ai_employment ✓")
 W("")
 
 W("## 평가 한계")
@@ -338,23 +344,23 @@ for t in TYPES:
     mb, ma = m_before[t], m_after[t]
     print(f"{t:<10} {exp_cnt:>4}  {mb['tp']:>5} {mb['recall']:>6.0%}  {ma['tp']:>5} {ma['recall']:>6.0%}")
 print()
-print("규칙별 발동:")
+print("규칙별 발동 (기사 번호: display_no 1-based):")
 for rname in ["P2a","P2b","P2c","P2d"]:
-    idxs  = rule_used.get(rname, [])
+    dnos  = [f"#{i+1:02d}" for i in rule_used.get(rname, [])]
     tp_n  = rule_tp.get(rname, 0)
     fp_n  = rule_fp.get(rname, 0)
-    print(f"  {rname}: TP+{tp_n} / 신규FP+{fp_n}  idx={idxs}")
+    print(f"  {rname}: TP+{tp_n} / 신규FP+{fp_n}  display_no={dnos}")
 print()
 print(f"신규 FP: {len(new_fps)}건")
 if new_fps:
     for r in new_fps:
-        print(f"  ⚠ #{r['idx']:02d} 기대={r['expected_type']} [{r['triggered_rule']}] {r['title'][:60]}")
+        print(f"  ⚠ #{r['display_no']:02d}(idx={r['dataset_index']}) 기대={r['expected_type']} [{r['triggered_rule']}] {r['title'][:60]}")
 print()
 if remaining_wrong:
     print(f"남은 오분류 ({len(remaining_wrong)}건):")
     for r in remaining_wrong:
         cause = "기존오류" if r["correct_before"]=="N" else "신규FP"
-        print(f"  [{cause}] #{r['idx']:02d} 기대={r['expected_type']} / 예측={r['prediction_after_rule']}  {r['title'][:50]}")
+        print(f"  [{cause}] #{r['display_no']:02d}(idx={r['dataset_index']}) 기대={r['expected_type']} / 예측={r['prediction_after_rule']}  {r['title'][:50]}")
 else:
     print("남은 오분류: 없음")
 print()
