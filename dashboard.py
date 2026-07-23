@@ -1639,9 +1639,11 @@ with tab4:
                             _conf_note  = {"높음": "본문 미확보 — 제목·요약 기반 분류 (콘텐츠 충분)",
                                            "보통": "본문 미확보 — 제목·요약 기반 분류 (콘텐츠 보통)",
                                            "낮음": "본문 미확보 — 제목·요약만 확보 (판정 신뢰도 낮음)"}
+                            _conf_text_color = _conf_color.get(_confidence, "#374151")
+                            _conf_background = _conf_bg.get(_confidence, "#F3F4F6")
                             st.markdown(
-                                f"<div style='font-size:11px;color:{_conf_color.get(_confidence,\"#374151\")};background:{_conf_bg.get(_confidence,\"#F3F4F6\")};padding:3px 7px;border-radius:4px;margin:3px 0'>"
-                                f"{_conf_icon.get(_confidence,'')} 판정 신뢰도 <b>{_confidence}</b> — {_conf_note.get(_confidence,'')}"
+                                f"<div style='font-size:11px;color:{_conf_text_color};background:{_conf_background};padding:3px 7px;border-radius:4px;margin:3px 0'>"
+                                f"{_conf_icon.get(_confidence, '')} 판정 신뢰도 <b>{_confidence}</b> — {_conf_note.get(_confidence, '')}"
                                 f"</div>",
                                 unsafe_allow_html=True)
 
