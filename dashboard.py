@@ -268,7 +268,7 @@ def ensure_data():
 # ══════════════════════════════════════════════════════════
 # 도출 키워드 CRUD
 # ══════════════════════════════════════════════════════════
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _gh_load_derived() -> pd.DataFrame:
     df = gh.read_csv("data/derived_keywords.csv")
     return df if df is not None else pd.DataFrame(columns=DERIVED_COLS)
@@ -346,7 +346,7 @@ def _set_status(keyword, month, status):
 # ══════════════════════════════════════════════════════════
 # 콘텐츠 CRUD
 # ══════════════════════════════════════════════════════════
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _gh_load_content() -> pd.DataFrame:
     df = gh.read_csv("data/applied_content.csv")
     return df if df is not None else pd.DataFrame(columns=CONTENT_COLS)
@@ -419,7 +419,7 @@ def delete_content_row(keyword, month, cname):
 # ══════════════════════════════════════════════════════════
 # 월별 수동 KPI
 # ══════════════════════════════════════════════════════════
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _gh_load_manual() -> pd.DataFrame:
     df = gh.read_csv("data/monthly_manual.csv")
     return df if df is not None else pd.DataFrame(columns=MANUAL_COLS)
@@ -493,7 +493,7 @@ def load_monthly_kpi_summary() -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════
 # 추적 키워드 CRUD
 # ══════════════════════════════════════════════════════════
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def _gh_load_tracked() -> pd.DataFrame:
     df = gh.read_csv("data/tracked_keywords.csv")
     return df if df is not None else pd.DataFrame(columns=TRACKED_COLS)
@@ -612,6 +612,17 @@ def get_last_collection_time() -> str:
 def _fetch_news_keywords_cached():
     from news_crawler import fetch_news_keywords
     return fetch_news_keywords(top_n=20)
+
+
+# ══════════════════════════════════════════════════════════
+# 검토 내역 캐시 (Google Sheets rerun마다 재조회 방지)
+# ══════════════════════════════════════════════════════════
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_load_reviews() -> dict:
+    return mrs.load_reviews()
+
+def _inv_reviews() -> None:
+    _cached_load_reviews.clear()
 
 
 # ══════════════════════════════════════════════════════════
@@ -1466,7 +1477,7 @@ with tab4:
             st.caption(f"마지막 업데이트: {_upd_str}  ·  최종 선정 {_mon_cnt}건")
 
             # ── ① 검토 현황 요약 (7단계) ─────────────────────────
-            _mon_reviews = mrs.load_reviews()
+            _mon_reviews = _cached_load_reviews()
             _rv_summary  = count_review_summary(_mon_selected, _mon_reviews)
             _rvc1, _rvc2, _rvc3, _rvc4, _rvc5 = st.columns(5)
             for _rvc, _lbl, _val in [
@@ -1637,7 +1648,7 @@ with tab4:
                         st.markdown(_axis_html, unsafe_allow_html=True)
 
                         # 판정 신뢰도 (콘텐츠 기반 — SCK 관련성과 무관)
-                        _confidence = _mon_art.get("_confidence", "")
+                        _confidence = _art.get("_confidence", "")
                         if _confidence:
                             _conf_color = {"높음": "#166534", "보통": "#92400E", "낮음": "#991B1B"}
                             _conf_bg    = {"높음": "#DCFCE7", "보통": "#FEF3C7", "낮음": "#FEE2E2"}
@@ -1688,7 +1699,7 @@ with tab4:
                                 if _mon_rws:
                                     st.markdown(f"**판정 근거**: {' · '.join(_mon_rws[:3])}")
                             # 9축 세부 점수 표시
-                            _axes = _mon_art.get("_score_axes")
+                            _axes = _art.get("_score_axes")
                             if _axes:
                                 st.markdown("**세부 점수 (9평가축)**")
                                 _ax_rows = [
@@ -1722,7 +1733,7 @@ with tab4:
                                 _ax_html += "</table>"
                                 st.markdown(_ax_html, unsafe_allow_html=True)
                             # 품질 요소 판정
-                            _qf = _mon_art.get("_quality_factors")
+                            _qf = _art.get("_quality_factors")
                             if _qf:
                                 _qf_labels = {
                                     "industry_change":  "변화·현상 감지",
@@ -1887,6 +1898,7 @@ with tab4:
                                 }
                                 _ok, _err = mrs.save_review(_rv_data)
                                 if _ok:
+                                    _inv_reviews()
                                     st.toast(f"저장됨 — {_rv_status_sel}")
                                     st.rerun()
                                 else:
