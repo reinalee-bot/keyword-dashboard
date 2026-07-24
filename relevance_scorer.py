@@ -117,10 +117,14 @@ def _cosentence_check(tl: str, dl: str, topic_h: list, impact_h: list) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────
-def score_relevance(title: str, description: str, query_keyword: str = None) -> dict:
+def score_relevance(title: str, description: str,
+                    query_keyword: str = None, body: str = "") -> dict:
     """
     기사 제목과 description 을 받아 SCK 관련성 점수 및 판정을 반환한다.
     query_keyword: 이 기사를 가져온 검색어 (분기 로직에 사용)
+    body: 확보된 원문 본문 (옵션). 자사·관계사 직접 언급 탐지에만 사용.
+          벤더·주제·리스크 등 일반 판정은 title+description만 사용해
+          일반 AI 기사 과대 수집을 방지한다.
     설정 파일 로드에 실패하면 중립값(FALLBACK)을 반환한다.
     """
     try:
@@ -130,7 +134,9 @@ def score_relevance(title: str, description: str, query_keyword: str = None) -> 
 
     tl = (title or "").lower()
     dl = (description or "").lower()
-    cx = tl + " " + dl  # 제목+설명 합산 텍스트
+    bl = (body or "").lower()
+    cx = tl + " " + dl          # 벤더·주제·리스크·감점 등 일반 판정 텍스트
+    owned_cx = (cx + " " + bl) if bl else cx  # 자사·관계사 탐지는 본문까지 포함
 
     # ── 외국어 필터 ──────────────────────────────────────────
     is_foreign = _is_foreign(title + " " + (description or ""))
@@ -161,7 +167,9 @@ def score_relevance(title: str, description: str, query_keyword: str = None) -> 
     deducts: list = []
 
     # ── 1. 자사·관계사 직접 언급 ─────────────────────────────
-    own_h = _hits(cx, owned)
+    # owned_cx = title+description+body(있으면). 본문을 포함해 탐지 커버리지를 높임.
+    # 이 결과가 90점으로 확정되면 이하 상한 규칙(broad_topic·vendor 상한)이 적용되지 않음.
+    own_h = _hits(owned_cx, owned)
     if own_h:
         score = 90
         reasons.append(f"자사/관계사 직접 언급: {own_h[0]}")
@@ -381,7 +389,8 @@ def score_relevance(title: str, description: str, query_keyword: str = None) -> 
             deducts.append(f"기업 홍보성 내용 ({promo_h[0]})")
 
     # ── vendor 타사 기사 최종 상한 (리스크 등 모든 경로 우회 방지) ─────
-    if q_type == "vendor" and vendor_h and not vendor_is_title_subject and score > 30:
+    # 자사·관계사 직접 언급(own_h)이 확인된 기사는 상한 적용 제외
+    if q_type == "vendor" and vendor_h and not vendor_is_title_subject and score > 30 and not own_h:
         score = 30
         deducts.append("vendor 타사 기사 상한 (30점) 적용")
 

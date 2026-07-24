@@ -1,5 +1,5 @@
 """
-SCK 관련성 판정 회귀 테스트 (31개)
+SCK 관련성 판정 회귀 테스트 (41개)
 실행: python test_relevance.py
 """
 
@@ -309,6 +309,109 @@ cases = [
         "expect_level": "낮음",
         "expect_max_score": 20,
     },
+
+    # ── 자사·관계사 탐지 회귀 (에쓰핀테크놀로지 수정 검증) ─────────────────
+    {
+        "id": 32,
+        "name": "에쓰핀테크놀로지 description 직접 언급 → 높음 ≥90 자사·관계사",
+        "title": "AI시대, 기업의 새로운 경쟁력 '디지털 퀄리티'",
+        "desc": "에쓰핀테크놀로지가 기업 AI 전환을 지원하는 디지털 퀄리티 플랫폼을 발표했다. 클라우드 기반 AI 솔루션으로 엔터프라이즈 고객을 공략한다.",
+        "query": "AI",
+        "expect_level": "높음",
+        "expect_min_score": 90,
+        "expect_rtype": "자사·관계사",
+        "expect_reason_contains": "에쓰핀테크놀로지",
+    },
+    {
+        "id": 33,
+        "name": "에쓰핀테크놀로지 본문(body)에만 등장 → 높음 ≥90",
+        "title": "AI시대, 기업의 새로운 경쟁력 '디지털 퀄리티'",
+        "desc": "디지털 퀄리티 플랫폼이 기업 AI 전환 경쟁력을 높이고 있다.",
+        "body": "에쓰핀테크놀로지는 이번 발표에서 클라우드 기반 AI 솔루션을 공개했다. 기업 고객 대상 서비스로 출시 예정이다.",
+        "query": "AI",
+        "expect_level": "높음",
+        "expect_min_score": 90,
+        "expect_rtype": "자사·관계사",
+    },
+    {
+        "id": 34,
+        "name": "S.Pin Technology 영문명 description 등장 → 높음 ≥90",
+        "title": "Cloud AI Platform Leader S.Pin Technology Expands Korea Enterprise Market",
+        "desc": "S.Pin Technology가 국내 기업 AI 솔루션 시장에서 클라우드 플랫폼 사업을 확대한다.",
+        "query": "AI",
+        "expect_level": "높음",
+        "expect_min_score": 90,
+        "expect_rtype": "자사·관계사",
+    },
+    {
+        "id": 35,
+        "name": "에쓰씨케이 description 등장 → 높음 ≥90 (기존 회귀)",
+        "title": "국내 IT 솔루션 기업, 기업 AI 전환 선도",
+        "desc": "에쓰씨케이가 기업 AI 전환 솔루션을 발표하며 엔터프라이즈 시장에서의 입지를 강화하고 있다.",
+        "query": "AI",
+        "expect_level": "높음",
+        "expect_min_score": 90,
+        "expect_rtype": "자사·관계사",
+    },
+    {
+        "id": 36,
+        "name": "s.pin 부분 문자열 — S.Pin Technology 아님 → 오탐 없음",
+        "title": "핀테크 스타트업 s.pin, 모바일 결제 서비스 출시",
+        "desc": "국내 핀테크 스타트업 s.pin이 소비자 대상 모바일 결제 서비스를 출시했다.",
+        "query": "AI",
+        "expect_level": "낮음",
+        "expect_max_score": 34,
+    },
+    {
+        "id": 37,
+        "name": "순수 AI 일반 기사, 자사 무관 → broad_topic 상한 유지",
+        "title": "AI 기술이 바꾸는 미래 사회",
+        "desc": "인공지능 기술이 발전하면서 사회 전반에 걸쳐 큰 변화가 나타나고 있다.",
+        "query": "AI",
+        "expect_level": "낮음",
+        "expect_max_score": 34,
+    },
+    {
+        "id": 38,
+        "name": "body 파라미터 있어도 자사명 없으면 높음 아님",
+        "title": "AI시대, 기업의 새로운 경쟁력 '디지털 퀄리티'",
+        "desc": "디지털 퀄리티 플랫폼이 기업 AI 전환 경쟁력을 높이고 있다.",
+        "body": "다양한 기업들이 디지털 퀄리티를 강화하고 있으며, AI 도입이 활발하다. 업무 효율이 높아지고 있다.",
+        "query": "AI",
+        "expect_level_not": "높음",
+        "expect_max_score": 54,
+    },
+    {
+        "id": 39,
+        "name": "관계사 body 탐지 후 broad_topic 상한 적용 안 됨 → 90점 유지",
+        "title": "AI 디지털 전환 시대의 기업 경쟁력",
+        "desc": "생성형AI와 클라우드를 활용한 기업의 경쟁력 강화가 주목받고 있다.",
+        "body": "에쓰핀테크놀로지는 AI 기반 디지털 퀄리티 플랫폼을 통해 기업 고객의 업무 효율을 높이고 있다.",
+        "query": "AI",
+        "expect_level": "높음",
+        "expect_min_score": 90,
+        "expect_rtype": "자사·관계사",
+    },
+    {
+        "id": 40,
+        "name": "SCK 기존 탐지 회귀 — description 등장 → 높음 ≥90",
+        "title": "국내 IT 솔루션 파트너십 현황",
+        "desc": "SCK커뮤니케이션이 Microsoft 파트너십을 확대하고 기업 솔루션 공급을 강화하고 있다.",
+        "query": "Microsoft",
+        "expect_level": "높음",
+        "expect_min_score": 90,
+        "expect_rtype": "자사·관계사",
+    },
+    {
+        "id": 41,
+        "name": "vendor 쿼리 + 자사 언급 — vendor 상한(30pt) 적용 안 됨 → 높음 ≥90",
+        "title": "국내 IT 기업, Microsoft 파트너십 기반 AI 솔루션 확대",
+        "desc": "에쓰핀테크놀로지가 Microsoft 파트너십을 통해 기업 AI 솔루션 공급을 확대한다. 라이선스 체계도 개편한다.",
+        "query": "Microsoft",
+        "expect_level": "높음",
+        "expect_min_score": 90,
+        "expect_rtype": "자사·관계사",
+    },
 ]
 
 passed = 0
@@ -319,10 +422,12 @@ print("SCK 관련성 판정 회귀 테스트")
 print("=" * 72)
 
 for c in cases:
-    result = score_relevance(c["title"], c["desc"], query_keyword=c.get("query"))
+    result = score_relevance(c["title"], c["desc"], query_keyword=c.get("query"),
+                             body=c.get("body", ""))
     level = result["_relevance_level"]
     score = result["_relevance_score"]
     reasons = result.get("_relevance_reasons", [])
+    rtype = result.get("_relevance_type", "")
 
     ok = True
     fail_msg = ""
@@ -346,6 +451,15 @@ for c in cases:
         if actual_foreign != c["expect_foreign"]:
             ok = False
             fail_msg += f" _foreign_language={actual_foreign} (기대: {c['expect_foreign']})"
+    if "expect_rtype" in c:
+        if rtype != c["expect_rtype"]:
+            ok = False
+            fail_msg += f" rtype={rtype} (기대: {c['expect_rtype']})"
+    if "expect_reason_contains" in c:
+        needle = c["expect_reason_contains"]
+        if not any(needle in r for r in reasons):
+            ok = False
+            fail_msg += f" 근거에 '{needle}' 없음"
 
     status = PASS if ok else FAIL
     if ok:
