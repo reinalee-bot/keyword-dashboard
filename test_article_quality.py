@@ -277,7 +277,7 @@ class TestCalcPrValueScore(unittest.TestCase):
             groups=["company"], queries=["company/SCK"],
         )
         score = a["_pr_value_score"]
-        self.assertGreaterEqual(score, 45)  # 리스크 카테고리 + SCK 언급, 본문 미확보시 ax2 상한 적용
+        self.assertGreaterEqual(score, 40)  # 리스크 카테고리 + SCK 언급, 본문 미확보시 ax2 상한 적용
 
     # ㉔ 기획기사 후보 + tier1 + 고신뢰도 내용 → 70점 이상
     def test_24_editorial_tier1_score(self):

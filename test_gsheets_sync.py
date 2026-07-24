@@ -212,14 +212,14 @@ class TestGsheetLoad(unittest.TestCase):
 
     def test_extra_cols_in_sheets_no_error(self):
         """Sheets에 REVIEW_COLS 외 추가 열이 있어도 오류가 발생하지 않는다."""
-        ws = FakeWorksheet(extra_cols=["promotional_likelihood", "future_field"])
-        row = ["aid_extra"] + [""] * (len(REVIEW_COLS) - 1) + ["높음", "foo"]
+        ws = FakeWorksheet(extra_cols=["_unknown_future_p99", "another_future"])
+        row = ["aid_extra"] + [""] * (len(REVIEW_COLS) - 1) + ["foo", "bar"]
         ws.append_row(row)
         result = mrs._gsheet_load(ws)
         self.assertIn("aid_extra", result)
-        # 알 수 없는 열은 result에 포함되지 않는다
-        self.assertNotIn("promotional_likelihood", result["aid_extra"])
-        self.assertNotIn("future_field", result["aid_extra"])
+        # REVIEW_COLS에 없는 열은 result에 포함되지 않는다
+        self.assertNotIn("_unknown_future_p99", result["aid_extra"])
+        self.assertNotIn("another_future", result["aid_extra"])
 
     def test_header_order_independent(self):
         """열 순서가 달라도 열 이름 기준으로 데이터를 읽는다."""
@@ -433,7 +433,7 @@ class TestCsvBackend(unittest.TestCase):
     def test_load_extra_cols_excluded(self):
         """CSV에 REVIEW_COLS 외 추가 열이 있어도 결과에 포함되지 않는다."""
         with _temp_csv() as csv_path:
-            extra_cols = REVIEW_COLS + ["promotional_likelihood"]
+            extra_cols = REVIEW_COLS + ["_unknown_future_p99"]
             with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
                 w = csv.DictWriter(f, fieldnames=extra_cols)
                 w.writeheader()
@@ -441,7 +441,7 @@ class TestCsvBackend(unittest.TestCase):
                 row["article_id"] = "ext1"
                 w.writerow(row)
             df = mrs._load_csv_df()
-            self.assertNotIn("promotional_likelihood", df.columns)
+            self.assertNotIn("_unknown_future_p99", df.columns)
             self.assertListEqual(list(df.columns), REVIEW_COLS)
 
     def test_upsert_multiple_ids(self):
@@ -689,48 +689,51 @@ class TestRoundtrip(unittest.TestCase):
 # ──────────────────────────────────────────────────────────────
 
 class TestSchemaCompat(unittest.TestCase):
-    """P3 설계(article_type 분리) 실제 구현 전 스키마 호환성 확인"""
+    """P5C 이후 스키마 호환성 확인 (promotional_likelihood 등 6개 신규 필드 포함)"""
 
     def test_csv_with_extra_column_loads_safely(self):
         """
-        CSV에 promotional_likelihood 같은 미지원 열이 있어도
+        CSV에 REVIEW_COLS에 없는 미래 열이 있어도
         _load_csv_df는 REVIEW_COLS만 반환하고 오류가 없다.
         """
         with _temp_csv() as csv_path:
-            extra_cols = REVIEW_COLS + ["promotional_likelihood"]
+            extra_cols = REVIEW_COLS + ["_unknown_future_p99"]
             with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
                 w = csv.DictWriter(f, fieldnames=extra_cols)
                 w.writeheader()
                 w.writerow({
                     **{c: "" for c in extra_cols},
                     "article_id": "compat1",
-                    "promotional_likelihood": "높음",
+                    "_unknown_future_p99": "미래값",
                 })
             df = mrs._load_csv_df()
-        self.assertNotIn("promotional_likelihood", df.columns)
+        self.assertNotIn("_unknown_future_p99", df.columns)
         self.assertEqual(df.iloc[0]["article_id"], "compat1")
 
     def test_sheets_with_new_col_load_safe(self):
         """
-        Sheets에 신규 열(promotional_likelihood)이 있어도
+        Sheets에 REVIEW_COLS에 없는 미래 열이 있어도
         _gsheet_load는 오류 없이 REVIEW_COLS 데이터만 반환한다.
         """
-        ws = FakeWorksheet(extra_cols=["promotional_likelihood"])
-        row = ["fut1"] + [""] * (len(REVIEW_COLS) - 1) + ["높음"]
+        ws = FakeWorksheet(extra_cols=["_unknown_future_p99"])
+        row = ["fut1"] + [""] * (len(REVIEW_COLS) - 1) + ["미래값"]
         ws.append_row(row)
         result = mrs._gsheet_load(ws)
         self.assertIn("fut1", result)
-        self.assertNotIn("promotional_likelihood", result["fut1"])
+        self.assertNotIn("_unknown_future_p99", result["fut1"])
 
     def test_sheets_missing_new_col_load_safe(self):
         """
-        Sheets에 신규 열이 아직 없는 경우,
-        _gsheet_load는 기존 REVIEW_COLS 데이터를 정상 반환한다.
+        Sheets에 P5C 신규 열이 아직 없어도 (구버전 18열 시트),
+        _gsheet_load는 기존 데이터를 정상 반환한다.
         """
-        ws = FakeWorksheet()  # 기존 REVIEW_COLS만 있음
-        ws.append_row(["old1"] + ["v"] * (len(REVIEW_COLS) - 1))
+        # 구버전 18열 시트 (promotional_likelihood 이전)
+        old_cols = REVIEW_COLS[:18]
+        ws = FakeWorksheet(header=old_cols)
+        ws.append_row(["old1"] + ["v"] * (len(old_cols) - 1))
         result = mrs._gsheet_load(ws)
         self.assertIn("old1", result)
+        # 구버전 시트에서 로드한 값은 REVIEW_COLS 기준으로 매핑
         self.assertEqual(len(result["old1"]), len(REVIEW_COLS))
 
     def test_upsert_with_extra_local_field_ignored(self):
@@ -740,20 +743,19 @@ class TestSchemaCompat(unittest.TestCase):
         """
         ws = FakeWorksheet()
         row = _base_row(article_id="extra1")
-        row["promotional_likelihood"] = "높음"  # 미지원 필드
+        row["_unknown_future_p99"] = "미래값"  # 미지원 필드
         result = mrs._gsheet_upsert(ws, row)
         self.assertTrue(result)
         found = ws.find_row_dict("extra1")
         self.assertIsNotNone(found)
-        self.assertNotIn("promotional_likelihood", found)
+        self.assertNotIn("_unknown_future_p99", found)
 
-    def test_review_cols_has_no_promotional_likelihood(self):
+    def test_review_cols_has_promotional_likelihood(self):
         """
-        현재 REVIEW_COLS에 promotional_likelihood가 없다.
-        P3 설계 실제 구현 전에는 이 테스트가 통과해야 한다.
+        P5C 구현 후 REVIEW_COLS에 promotional_likelihood가 포함된다.
         """
-        self.assertNotIn("promotional_likelihood", REVIEW_COLS,
-                         "promotional_likelihood는 P3 구현 전 REVIEW_COLS에 없어야 한다")
+        self.assertIn("promotional_likelihood", REVIEW_COLS,
+                      "promotional_likelihood는 P5C 이후 REVIEW_COLS에 있어야 한다")
 
     def test_make_article_id_stable(self):
         """make_article_id는 같은 입력에 대해 항상 동일한 값을 반환한다."""

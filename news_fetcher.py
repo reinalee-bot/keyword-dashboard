@@ -737,8 +737,15 @@ def fetch_articles_for_keyword(
             continue
         seen_titles.append(_title)
 
-        # 기사 유형 분류
-        art["article_type"] = classify_article_type(_title, _desc, _mname, _url)
+        # 기사 유형 분류 (P5C: classify_article_extended 4종 체계)
+        _ext = classify_article_extended(_title, _desc, _mname, _url)
+        art["article_type"]           = _ext["article_type"]
+        art["promotional_likelihood"] = _ext["promotional_likelihood"]
+        art["title_signal"]           = _ext["title_signal"]
+        art["description_signal"]     = _ext["description_signal"]
+        art["matched_rule"]           = _ext["matched_rule"]
+        art["promotional_score"]      = _ext["promotional_score"]
+        art["classification_basis"]   = _ext["classification_basis"]
         if _EXTENDED_SHADOW:
             enrich_article_extended(art)
         if art["article_type"] == "제외 대상":

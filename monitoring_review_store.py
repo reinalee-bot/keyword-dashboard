@@ -38,6 +38,9 @@ REVIEW_COLS = [
     "selection_reason", "pr_suggestion",
     "review_status", "usage_type", "exclusion_reason",
     "follow_up_required", "reviewer_memo", "reviewed_at",
+    # P5C: 분류 근거 필드 (신규)
+    "promotional_likelihood", "title_signal", "description_signal",
+    "matched_rule", "promotional_score", "classification_basis",
 ]
 
 REVIEW_STATUSES   = ["검토 전", "관심 기사", "PR 후보", "제외"]
@@ -50,7 +53,7 @@ EXCLUSION_REASONS = [
 _KST      = timezone(timedelta(hours=9))
 _log      = logging.getLogger(__name__)
 _WSNAME   = "monitoring_reviews"
-_COL_END  = chr(ord('A') + len(REVIEW_COLS) - 1)  # 'R' (18열)
+_COL_END  = chr(ord('A') + len(REVIEW_COLS) - 1)  # 'X' (24열)
 
 # ─────────────────────────────────────────────────────────────
 # 기사 식별자
@@ -158,11 +161,16 @@ def _get_gsheet_worksheet():
         except gspread.exceptions.WorksheetNotFound:
             ws = sh.add_worksheet(_WSNAME, rows=2000, cols=len(REVIEW_COLS))
 
-        # 헤더 행 확인 및 삽입
+        # 헤더 행 확인 및 삽입 (신규 컬럼 추가 포함)
         try:
             first_row = ws.row_values(1)
             if not first_row or first_row[0] != "article_id":
                 ws.insert_row(REVIEW_COLS, 1)
+            else:
+                # 기존 시트에 신규 컬럼이 없으면 헤더 끝에 추가
+                missing = [c for c in REVIEW_COLS if c not in first_row]
+                if missing:
+                    ws.update([first_row + missing], "A1")
         except Exception:
             pass
 
@@ -206,14 +214,21 @@ def _gsheet_load(ws) -> dict:
 
 
 def _gsheet_upsert(ws, row_data: dict) -> bool:
-    """Google Sheets에 article_id 기준 upsert. 성공 시 True."""
+    """Google Sheets에 article_id 기준 upsert. 헤더 기반 컬럼 매핑. 성공 시 True."""
     try:
         article_id = row_data["article_id"]
-        values     = [str(row_data.get(col, "")) for col in REVIEW_COLS]
+        # 헤더 기반 컬럼 매핑 — 시트 컬럼 순서와 REVIEW_COLS가 다를 수 있음
+        col_map = _ws_col_map if _ws_col_map else {h: i for i, h in enumerate(REVIEW_COLS)}
+        n_cols  = max(col_map.values()) + 1 if col_map else len(REVIEW_COLS)
+        values  = [""] * n_cols
+        for col_name, idx in col_map.items():
+            if col_name in row_data:
+                values[idx] = str(row_data.get(col_name, ""))
+        col_end = chr(ord('A') + n_cols - 1)
         cell = ws.find(article_id, in_column=1)
         if cell is not None:
             # gspread 6.x: update(values, range_name) — 인자 순서 주의
-            ws.update([values], f"A{cell.row}:{_COL_END}{cell.row}")
+            ws.update([values], f"A{cell.row}:{col_end}{cell.row}")
         else:
             ws.append_row(values, value_input_option="RAW")
         return True
@@ -241,24 +256,31 @@ def _gsheet_delete(ws, article_id: str) -> bool:
 
 _ws_singleton = None
 _ws_init_done = False
+_ws_col_map: dict = {}  # {col_name: 0-based col index} — 헤더 기반 컬럼 위치 캐시
 
 
 def _get_ws():
     """캐시된 워크시트를 반환한다. 첫 호출 시 연결 및 마이그레이션을 수행한다."""
-    global _ws_singleton, _ws_init_done
+    global _ws_singleton, _ws_init_done, _ws_col_map
     if not _ws_init_done:
         _ws_singleton = _get_gsheet_worksheet()
         if _ws_singleton is not None:
             _migrate_csv_to_gsheet(_ws_singleton)
+            try:
+                headers = _ws_singleton.row_values(1) or REVIEW_COLS[:]
+                _ws_col_map = {h: i for i, h in enumerate(headers)}
+            except Exception:
+                _ws_col_map = {h: i for i, h in enumerate(REVIEW_COLS)}
         _ws_init_done = True
     return _ws_singleton
 
 
 def reset_ws_cache() -> None:
     """워크시트 캐시를 초기화한다 (테스트·재연결 용도)."""
-    global _ws_singleton, _ws_init_done
+    global _ws_singleton, _ws_init_done, _ws_col_map
     _ws_singleton = None
     _ws_init_done = False
+    _ws_col_map   = {}
 
 
 # ─────────────────────────────────────────────────────────────

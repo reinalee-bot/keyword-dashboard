@@ -202,6 +202,10 @@ p, h1, h2, h3, h4, h5, h6, li, td, th, label, caption,
 .rel-mid  { display:inline-block;background:#FEF3C7;color:#92400E;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:4px; }
 .rel-low  { display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:4px; }
 .rel-type { display:inline-block;background:#EFF6FF;color:#1E40AF;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600; }
+/* ── 홍보가능성 배지 ────────────────────────────────── */
+.promo-high { display:inline-block;background:#D1FAE5;color:#065F46;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;margin-right:4px; }
+.promo-mid  { display:inline-block;background:#FEF3C7;color:#92400E;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;margin-right:4px; }
+.promo-low  { display:inline-block;background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:600;margin-right:4px; }
 .rel-why  { font-size:11px;color:#94A3B8;line-height:1.6;margin:2px 0 5px; }
 .art-suggest    { font-size:11.5px;color:#2F6BFF;background:#EEF4FF;border-radius:4px;padding:3px 8px;display:inline-block;margin:4px 0; }
 .art-suggest.risk { color:#B45309;background:#FFFBEB; }
@@ -1560,6 +1564,7 @@ with tab4:
                     _mon_mn      = _art.get("media_name", "") or ""
                     _mon_dt      = _art.get("pub_datetime", "") or ""
                     _mon_at      = _art.get("article_type", "") or ""
+                    _mon_pl      = _art.get("promotional_likelihood", "") or ""
                     _mon_cat     = _art.get("_monitoring_category", "기타") or "기타"
                     _mon_rl      = _art.get("_relevance_level", "") or ""
                     _mon_rws     = _art.get("_relevance_reasons", []) or []
@@ -1623,6 +1628,7 @@ with tab4:
                         _axis_html = (
                             f"<div style='font-size:11px;color:#64748B;margin:3px 0;line-height:1.7'>"
                             f"<b>기사유형</b> {_mon_at or '—'} &nbsp;│&nbsp; "
+                            f"<b>홍보가능성</b> {_mon_pl or '—'} &nbsp;│&nbsp; "
                             f"<b>SCK관련성</b> {_mon_rl or '—'} &nbsp;│&nbsp; "
                             f"<b>PR목적</b> {_pr_purpose} &nbsp;│&nbsp; "
                             f"<b>주목도</b> {_attention}"
@@ -1961,10 +1967,11 @@ with tab4:
 
             t4_days = st.radio("조회 기간", ["최근 7일", "최근 14일", "최근 30일"],
                                horizontal=True, key="t4_days_r")
-            _fc, _fd, _fe = st.columns([3, 3, 3])
+            _fc, _fd, _fe, _ff = st.columns([3, 3, 3, 3])
             with _fc: t4_scope = st.selectbox("언론사 범위", ["주요 제휴·우선 매체만", "전체 뉴스 검색 결과"], key="t4_scope")
-            with _fd: t4_type  = st.selectbox("기사 유형", ["전체","보도자료형","기획·분석","인터뷰","행사·현장","일반 기사"], key="t4_type")
-            with _fe: t4_sort  = st.selectbox("정렬", ["추천순","화제성순","최신순"], key="t4_sort")
+            with _fd: t4_type  = st.selectbox("기사 유형", ["전체","기획·분석","인터뷰","행사·현장","일반 기사"], key="t4_type")
+            with _fe: t4_promo = st.selectbox("홍보가능성", ["전체","높음","보통","낮음"], key="t4_promo")
+            with _ff: t4_sort  = st.selectbox("정렬", ["추천순","화제성순","최신순"], key="t4_sort")
 
             st.caption("※ 화제성 추정 점수는 매체 우선순위, 키워드 포함도, 최신성, 중복 보도 여부 등을 기준으로 산출한 내부 참고 지표입니다. 실제 기사 영향력 또는 PR 성과로 단정하지 않습니다.")
 
@@ -2071,10 +2078,13 @@ with tab4:
                         st.caption("해당 키워드·조건에 맞는 기사가 없습니다.")
                     continue
 
+                _promo_f = t4_promo if t4_promo != "전체" else ""
                 main_cls = [cl for cl in clusters
-                            if cl["rep"].get("_relevance_level", "보통") != "낮음"]
+                            if cl["rep"].get("_relevance_level", "보통") != "낮음"
+                            and (not _promo_f or cl["rep"].get("promotional_likelihood", "") == _promo_f)]
                 low_cls  = [cl for cl in clusters
-                            if cl["rep"].get("_relevance_level", "보통") == "낮음"]
+                            if cl["rep"].get("_relevance_level", "보통") == "낮음"
+                            and (not _promo_f or cl["rep"].get("promotional_likelihood", "") == _promo_f)]
 
                 for ci in range(0, len(main_cls), 2):
                     batch_cl = main_cls[ci:ci+2]
@@ -2088,6 +2098,7 @@ with tab4:
                         with col:
                             with st.container(border=True):
                                 at  = rep.get("article_type", "")
+                                pl  = rep.get("promotional_likelihood", "")
                                 sc  = rep.get("_score", 0)
                                 wl  = rep.get("_in_whitelist", False)
                                 ttl = rep.get("title", "")
@@ -2098,6 +2109,10 @@ with tab4:
 
                                 badges = [f"<span class='art-kw'>{rep.get('search_keyword','')}</span>"]
                                 if at:  badges.append(_art_type_html(at))
+                                if pl:
+                                    _pcls = {"높음":"promo-high","보통":"promo-mid","낮음":"promo-low"}.get(pl,"")
+                                    if _pcls:
+                                        badges.append(f"<span class='{_pcls}'>홍보 {pl}</span>")
                                 if wl:  badges.append("<span class='art-media'>주요 매체</span>")
                                 badges.append(
                                     f"<span class='art-score' title='내부 참고 지표 — 키워드 관련성, 관련 보도 수, 매체 우선등급, 최신성을 종합'>"
