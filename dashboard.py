@@ -541,6 +541,14 @@ def remove_all_tracked():
 # ══════════════════════════════════════════════════════════
 @st.cache_data(ttl=600, show_spinner=False)   # 10분 — 8시간 캐시가 갱신 지연의 근본 원인이었음
 def load_trends() -> pd.DataFrame:
+    # GitHub 연동 시 항상 최신 커밋 파일을 읽음(deploy 갱신 불필요)
+    if gh.is_configured():
+        df = gh.read_csv("data/trends.csv")
+        if df is not None and not df.empty:
+            df["date"] = pd.to_datetime(df["date"])
+            if "ratio" in df.columns:
+                df["ratio"] = pd.to_numeric(df["ratio"], errors="coerce").fillna(0.0)
+            return df
     if not os.path.exists(TRENDS_CSV): return pd.DataFrame()
     df = pd.read_csv(TRENDS_CSV)
     df["date"] = pd.to_datetime(df["date"])
@@ -552,7 +560,9 @@ def _persist_trends_to_gh(keyword: str):
     if not gh.is_configured() or not os.path.exists(TRENDS_CSV):
         return
     try:
-        gh.write_csv(pd.read_csv(TRENDS_CSV), "data/trends.csv", f"트렌드 수집: {keyword}")
+        ok = gh.write_csv(pd.read_csv(TRENDS_CSV), "data/trends.csv", f"트렌드 수집: {keyword}")
+        if ok:
+            load_trends.clear()
     except Exception:
         pass
 
