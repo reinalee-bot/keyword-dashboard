@@ -31,6 +31,15 @@ COLS           = ["keyword", "date", "ratio", "source", "collected_at"]
 API_URL        = "https://openapi.naver.com/v1/datalab/search"
 BATCH          = 5   # 네이버 API 한 번 요청에 최대 5개
 
+# 한글 표기만으로는 Naver DataLab 검색량이 0인 키워드 → 영문·복합표기 함께 묶어 수집
+KEYWORD_SYNONYMS: dict[str, list[str]] = {
+    "섀도우AI": ["섀도우AI", "Shadow AI", "섀도우 AI"],
+}
+
+
+def _naver_kw_group(kw: str) -> dict:
+    return {"groupName": kw, "keywords": KEYWORD_SYNONYMS.get(kw, [kw])}
+
 
 def _load_all_keywords() -> list:
     """기본 KEYWORDS + derived_keywords.csv 추적 키워드를 합산해 반환."""
@@ -109,7 +118,7 @@ def _naver_fetch_batch(keywords_batch, start_date, end_date):
         "startDate":     start_date,
         "endDate":       end_date,
         "timeUnit":      "date",
-        "keywordGroups": [{"groupName": kw, "keywords": [kw]} for kw in keywords_batch],
+        "keywordGroups": [_naver_kw_group(kw) for kw in keywords_batch],
     }
     resp = requests.post(API_URL, headers=headers, json=body, timeout=15)
 
