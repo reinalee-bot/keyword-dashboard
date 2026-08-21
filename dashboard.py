@@ -474,10 +474,18 @@ def load_monthly_kpi_summary() -> pd.DataFrame:
     if not df_m.empty:
         for _,r in df_m.iterrows():
             m = r.get("kpi_month","")
-            if not m or m in auto: continue
+            if not m: continue
             try:   d_,rv = int(r.get("manual_derived",0) or 0), int(r.get("manual_reflected",0) or 0)
             except: d_,rv = 0,0
-            manual[m] = {"도출":d_,"반영":rv,"비고":f"수동 입력 ({r.get('note','')})".rstrip(" ()")}
+            note_txt = r.get("note","") or ""
+            if m in auto:
+                # 자동집계 월에 수동 입력이 있으면 합산
+                auto[m]["도출"] += d_
+                auto[m]["반영"] += rv
+                if note_txt:
+                    auto[m]["비고"] = f"자동+수동 ({note_txt})"
+            else:
+                manual[m] = {"도출":d_,"반영":rv,"비고":f"수동 입력 ({note_txt})".rstrip(" ()")}
     all_m = {**auto,**manual}
     if not all_m:
         return pd.DataFrame(columns=["월","도출 키워드","반영 완료","반영률(%)","KPI 달성","비고"])
@@ -759,8 +767,7 @@ def _render_manual_form(df_monthly, pfx=""):
         ms = mm.strip()
         autos = set(df_monthly[df_monthly["비고"]=="자동 집계"]["월"].tolist()) if not df_monthly.empty else set()
         if not re.match(r"^\d{4}-\d{2}$",ms): st.warning("YYYY-MM 형식으로 입력해 주세요.")
-        elif ms==CURRENT_MONTH: st.warning("이번 달은 자동 집계됩니다.")
-        elif ms in autos: st.warning(f"{ms}은 자동 집계 데이터가 있습니다.")
+        elif ms==CURRENT_MONTH: st.warning("이번 달은 자동 집계됩니다. '키워드 발굴·등록' 탭에서 키워드를 직접 추가해 주세요.")
         elif int(mr2)>int(md): st.warning("반영 건수는 도출 건수보다 클 수 없습니다.")
         else:
             if add_manual_month(ms,int(md),int(mr2),mn.strip()):
@@ -956,6 +963,32 @@ with tab1:
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                    key="t1_dl_m")
             _render_monthly_table(dfm)
+
+            # ── 월별 도출 키워드 목록 ──────────────────────
+            st.markdown("<div style='margin-top:1.4rem'></div>", unsafe_allow_html=True)
+            st.markdown("""<div class="sh-sub"><div class="t">월별 도출 키워드 목록</div>
+<div class="s">각 월에 등록된 도출 키워드 전체 목록</div></div>""", unsafe_allow_html=True)
+            _da_hist = _read_derived_all()
+            if _da_hist.empty:
+                st.caption("등록된 키워드가 없습니다.")
+            else:
+                _hist_months = sorted(_da_hist["kpi_month"].dropna().unique(), reverse=True)
+                for _hm in _hist_months:
+                    _hm_kws = _da_hist[_da_hist["kpi_month"]==_hm]
+                    _hm_list = _hm_kws["keyword"].tolist()
+                    _tags = " ".join(
+                        f"<span style='background:#F0F4FF;border:1px solid #C7D7FD;border-radius:20px;"
+                        f"padding:2px 10px;font-size:12px;color:#1d4ed8;margin:2px;display:inline-block'>"
+                        f"{_kw}</span>" for _kw in _hm_list
+                    )
+                    st.markdown(
+                        f"<div style='margin:8px 0 2px'>"
+                        f"<strong>{_hm}</strong> "
+                        f"<span style='color:#667085;font-size:12px'>({len(_hm_list)}건)</span>"
+                        f"</div>{_tags}",
+                        unsafe_allow_html=True
+                    )
+
             st.markdown("<div style='margin-top:1rem'></div>",unsafe_allow_html=True)
             _render_manual_form(dfm,pfx="t1_")
 
@@ -992,10 +1025,18 @@ with tab2:
 
     # 메인 등록 폼 (expander 없음 — form 내부 expander가 _arr 원인 중 하나)
     with st.form("t2_qreg",clear_on_submit=True):
-        qa,qb,qc = st.columns([4,3,1.5])
+        qa,qb,qc,qd = st.columns([3,2,2,1.5])
         with qa: q_kw = st.text_input("키워드 *",placeholder="예: 제로트러스트")
         with qb: q_us = st.selectbox("활용처 *",USAGES)
         with qc:
+            _t2_d = date.today().replace(day=1)
+            _t2_months = []
+            for _i in range(12):
+                _t2_months.append(_t2_d.strftime("%Y-%m"))
+                _t2_d = (_t2_d - timedelta(days=1)).replace(day=1)
+            q_month = st.selectbox("등록 월 *", _t2_months, index=0,
+                                   help="현재 월이 기본값입니다. 과거 월 소급 등록도 가능합니다.")
+        with qd:
             st.markdown("<div style='height:28px'></div>",unsafe_allow_html=True)
             q_sub = st.form_submit_button("＋ 키워드 등록",use_container_width=True,type="primary")
 
@@ -1019,7 +1060,7 @@ with tab2:
         q_at = st.session_state.get("t2_at_s", True)
         if not kw_t:
             st.warning("키워드를 입력해 주세요.")
-        elif add_keyword(kw_t,CURRENT_MONTH,usage_type=q_us,
+        elif add_keyword(kw_t,q_month,usage_type=q_us,
                          vendor=q_ve.strip(),idea=q_id.strip(),source_url=q_su.strip()):
             _inv_derived()
             if q_at:
@@ -1028,7 +1069,8 @@ with tab2:
                         collect_single_keyword(kw_t)
                         _persist_trends_to_gh(kw_t)
                     load_trends.clear(); _inv_tracked()
-            st.success(f"✅ '{kw_t}' 등록 완료!")
+            _month_label = f" ({q_month})" if q_month != CURRENT_MONTH else ""
+            st.success(f"✅ '{kw_t}'{_month_label} 등록 완료!")
             # 선택 필드 초기화
             for _k in ["t2_ve_s","t2_id_s","t2_su_s"]:
                 if _k in st.session_state: del st.session_state[_k]
