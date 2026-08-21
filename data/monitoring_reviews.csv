@@ -1,1 +1,2 @@
-﻿article_id,title,url,media,published_at,category,monitoring_priority,relevance_score,news_importance_score,pr_usability_score,selection_reason,pr_suggestion,review_status,usage_type,follow_up_required,reviewer_memo,reviewed_at
+﻿article_id,title,url,media,published_at,category,monitoring_priority,relevance_score,news_importance_score,pr_usability_score,selection_reason,pr_suggestion,review_status,usage_type,exclusion_reason,follow_up_required,reviewer_memo,reviewed_at,promotional_likelihood,title_signal,description_signal,matched_rule,promotional_score,classification_basis
+bcf3fe20d8210857ceb5e84ab553d620,테스트 기사,http://test.com/1,테스트 매체,2026-07-23,,,,,,,,PR 후보,,,,,2026-07-23 18:46:42 KST,높음,,,,,

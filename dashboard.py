@@ -2303,12 +2303,31 @@ with tab4:
 # TAB 5 · 활용처 관리
 # ════════════════════════════════════════════════════════
 with tab5:
-    df_cur5  = load_derived(CURRENT_MONTH)
-    df_con5  = load_content(CURRENT_MONTH)
-
     st.markdown("""<div class="sh-main"><div class="t">PR 활용 관리</div>
 <div class="s">뉴스 모니터링에서 선별한 기사와 키워드의 PR 활용처 및 반영 상태를 관리합니다.</div></div>""",
                 unsafe_allow_html=True)
+
+    # ── 월 선택기 ────────────────────────────────────────────
+    _t5_d = date.today().replace(day=1)
+    _t5_months = []
+    for _i5 in range(12):
+        _t5_months.append(_t5_d.strftime("%Y-%m"))
+        _t5_d = (_t5_d - timedelta(days=1)).replace(day=1)
+    if "t5_month" not in st.session_state:
+        st.session_state["t5_month"] = CURRENT_MONTH
+    _t5_mo_cols = st.columns([2, 8])
+    with _t5_mo_cols[0]:
+        _t5_sel_idx = _t5_months.index(st.session_state["t5_month"]) if st.session_state["t5_month"] in _t5_months else 0
+        _t5_chosen = st.selectbox("조회 월", _t5_months, index=_t5_sel_idx,
+                                  key="t5_month_sel",
+                                  help="과거 월 키워드의 반영 현황도 조회·편집할 수 있습니다.")
+        if _t5_chosen != st.session_state["t5_month"]:
+            st.session_state["t5_month"] = _t5_chosen
+            st.rerun()
+    T5_MONTH = st.session_state["t5_month"]
+
+    df_cur5  = load_derived(T5_MONTH)
+    df_con5  = load_content(T5_MONTH)
 
     FILTER_OPTS=["전체","PR 기사","온드미디어","미지정","미반영"]
     if "t5_flt" not in st.session_state: st.session_state["t5_flt"]="전체"
@@ -2321,14 +2340,15 @@ with tab5:
                 st.session_state["t5_flt"]=f; st.rerun()
     with filt_cols[6]:
         st.download_button("⬇ 엑셀 다운로드",data=build_excel(),
-                           file_name=f"keyword_kpi_{CURRENT_MONTH}.xlsx",
+                           file_name=f"keyword_kpi_{T5_MONTH}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            use_container_width=True,key="t5_dl")
 
     flt=st.session_state["t5_flt"]
 
+    _t5_empty_msg = f"{T5_MONTH}에 등록된 도출 키워드가 없습니다. '🔍 키워드 발굴·등록' 탭에서 해당 월로 추가해 주세요."
     if df_cur5.empty:
-        st.info("이번 달 등록된 도출 키워드가 없습니다. '🔍 키워드 발굴·등록' 탭에서 추가해 주세요.")
+        st.info(_t5_empty_msg)
     else:
         if flt=="PR 기사":      df5=df_cur5[df_cur5["활용처"].isin(["PR 기사","공통"])].copy()
         elif flt=="온드미디어": df5=df_cur5[df_cur5["활용처"].isin(["온드미디어","공통"])].copy()
@@ -2360,8 +2380,8 @@ with tab5:
             r0,r1,r2,r3,r4,r5,r6=st.columns([2.2,2,1.5,3,1,1.5,1.1])
             with r0: st.markdown(f"<span class='td' style='font-weight:600'>{kw}</span>",unsafe_allow_html=True)
             with r1:
-                st.selectbox(f"활용처_{kw}",USAGES,index=cur_idx,key=f"t5_sel_{kw}",
-                             label_visibility="collapsed",on_change=_make_usage_cb(kw,CURRENT_MONTH))
+                st.selectbox(f"활용처_{kw}",USAGES,index=cur_idx,key=f"t5_sel_{kw}_{T5_MONTH}",
+                             label_visibility="collapsed",on_change=_make_usage_cb(kw,T5_MONTH))
                 if st.session_state.pop(f"t5_saved_{kw}",False):
                     st.markdown("<span style='color:#059669;font-size:11px'>✓ 저장됨</span>",unsafe_allow_html=True)
             with r2: st.markdown(_status_html(stat),unsafe_allow_html=True)
@@ -2375,8 +2395,8 @@ with tab5:
                 else:  st.markdown("<span style='color:#94A3B8;font-size:13px'>—</span>",unsafe_allow_html=True)
             with r5: st.markdown(f"<span class='td' style='color:#64748B'>{cd or '—'}</span>",unsafe_allow_html=True)
             with r6:
-                if st.button("편집",key=f"t5_ed_{kw}",use_container_width=True):
-                    content_dialog(kw,CURRENT_MONTH,usage)
+                if st.button("편집",key=f"t5_ed_{kw}_{T5_MONTH}",use_container_width=True):
+                    content_dialog(kw,T5_MONTH,usage)
             st.markdown("<hr style='margin:2px 0;border-color:#F1F5F9'>",unsafe_allow_html=True)
 
     st.markdown("<div style='margin-top:.8rem'></div>",unsafe_allow_html=True)
