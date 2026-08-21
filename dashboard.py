@@ -385,6 +385,33 @@ def add_content(keyword, month, ctype, cname, url, pub_at) -> bool:
     _set_status(keyword,month,"반영완료")
     return True
 
+def add_content_bulk(keywords: list, month: str, ctype: str,
+                     cname: str, url: str, pub_at: str) -> int:
+    """동일 콘텐츠를 여러 키워드에 한 번에 등록. 반환: 실제 저장된 키워드 수."""
+    if not keywords: return 0
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    df_c = _read_content_all()
+    df_d = _read_derived_all()
+    new_rows_c = []
+    updated_kws = []
+    for kw in keywords:
+        dup = (not df_c.empty
+               and ((df_c["keyword"]==kw)&(df_c["kpi_month"]==month)&(df_c["url"]==url)).any())
+        if not dup:
+            new_rows_c.append([kw, month, ctype, cname, url, pub_at, now])
+            updated_kws.append(kw)
+    if not updated_kws:
+        return 0
+    df_c = pd.concat([df_c, pd.DataFrame(new_rows_c, columns=CONTENT_COLS)], ignore_index=True)
+    _write_content(df_c, f"일괄 콘텐츠 등록: {', '.join(updated_kws[:3])}{'…' if len(updated_kws)>3 else ''}")
+    # 상태를 반영완료로 일괄 업데이트
+    if not df_d.empty:
+        mask = (df_d["keyword"].isin(updated_kws)) & (df_d["kpi_month"]==month)
+        df_d.loc[mask, "status"] = "반영완료"
+        _write_derived(df_d, f"일괄 상태 변경: {', '.join(updated_kws[:3])}{'…' if len(updated_kws)>3 else ''}")
+    return len(updated_kws)
+
+
 def _read_news_util() -> pd.DataFrame:
     if not os.path.exists(NEWS_UTIL_CSV):
         return pd.DataFrame(columns=NEWS_UTIL_COLS)
@@ -2329,6 +2356,53 @@ with tab5:
     df_cur5  = load_derived(T5_MONTH)
     df_con5  = load_content(T5_MONTH)
 
+    # ── 일괄 반영 등록 ──────────────────────────────────────
+    if collapsible_header("일괄 반영 등록 — 같은 콘텐츠에 여러 키워드 한 번에","t5_bulk_exp"):
+        with st.container(border=False):
+            _kw_all = df_cur5["키워드"].tolist() if not df_cur5.empty else []
+            if not _kw_all:
+                st.caption(f"{T5_MONTH}에 등록된 키워드가 없습니다.")
+            else:
+                with st.form("t5_bulk_form", clear_on_submit=True):
+                    _b1, _b2 = st.columns([1, 3])
+                    with _b1:
+                        _bct = st.selectbox("유형 *", ["PR 기사","온드미디어"], key="t5_b_ct")
+                    with _b2:
+                        _bcn = st.text_input("콘텐츠명 *", placeholder="예: AI 시대 기업 경쟁력 기고", key="t5_b_cn")
+                    _ba, _bb = st.columns([3, 1])
+                    with _ba:
+                        _burl = st.text_input("URL (선택)", placeholder="https://...", key="t5_b_url")
+                    with _bb:
+                        _bdt = st.date_input("발행일 *", value=date.today(), key="t5_b_dt")
+                    _bkws = st.multiselect(
+                        "적용할 키워드 *",
+                        options=_kw_all,
+                        default=[k for k in _kw_all
+                                 if df_cur5.loc[df_cur5["키워드"]==k,"상태"].values[0] != "반영완료"],
+                        help="같은 콘텐츠로 반영 처리할 키워드를 모두 선택하세요.",
+                        key="t5_b_kws"
+                    )
+                    _b_submit = st.form_submit_button("일괄 반영 등록", type="primary", use_container_width=False)
+                if _b_submit:
+                    _bcn_v = _bcn.strip()
+                    _burl_v = _burl.strip()
+                    if not _bcn_v:
+                        st.warning("콘텐츠명을 입력해 주세요.")
+                    elif not _bkws:
+                        st.warning("적용할 키워드를 하나 이상 선택해 주세요.")
+                    else:
+                        _saved = add_content_bulk(
+                            _bkws, T5_MONTH, _bct, _bcn_v, _burl_v, str(_bdt)
+                        )
+                        if _saved > 0:
+                            _inv_content(); _inv_derived()
+                            st.success(f"✅ {_saved}개 키워드 반영 등록 완료!")
+                            st.rerun()
+                        else:
+                            st.info("선택한 키워드는 이미 동일 URL로 등록되어 있습니다.")
+        st.markdown("<div style='margin-top:.5rem'></div>", unsafe_allow_html=True)
+
+    # ── 필터 & 목록 ──────────────────────────────────────────
     FILTER_OPTS=["전체","PR 기사","온드미디어","미지정","미반영"]
     if "t5_flt" not in st.session_state: st.session_state["t5_flt"]="전체"
 
