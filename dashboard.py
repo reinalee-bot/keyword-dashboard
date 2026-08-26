@@ -905,12 +905,11 @@ st.markdown(f"""
   <div class="kd-hero-sub">주요 뉴스와 키워드 흐름을 모니터링하고, PR 활용 가능한 이슈와 소재를 발굴합니다.</div>
 </div>""", unsafe_allow_html=True)
 
-tab1,tab2,tab3,tab4,tab5 = st.tabs([
+tab1,tab2,tab3,tab4 = st.tabs([
     "📊 모니터링 현황",
-    "📋 키워드 관리",
     "📈 추이 분석·발굴",
-    "📰 관련 뉴스 수집",
     "🗂️ PR 활용 관리",
+    "📰 관련 뉴스 수집",
 ])
 
 
@@ -1019,102 +1018,12 @@ with tab1:
             st.markdown("<div style='margin-top:1rem'></div>",unsafe_allow_html=True)
             _render_manual_form(dfm,pfx="t1_")
 
-    st.markdown("<div style='margin-top:2rem'></div>", unsafe_allow_html=True)
-    st.markdown("""<div class="sh-sub"><div class="t">다음 단계</div>
-<div class="s">아래 탭에서 작업을 이어가세요.</div></div>""", unsafe_allow_html=True)
-    _na, _nb, _nc = st.columns(3, gap="medium")
-    with _na:
-        st.markdown("""<div style='background:#F0F4FF;border:1px solid #C7D7FD;border-radius:10px;
-padding:16px 18px;text-align:center'>
-<div style='font-size:1.3rem'>🔍</div>
-<div style='font-weight:700;color:#101828;font-size:14px;margin:6px 0 4px'>키워드 등록하기</div>
-<div style='font-size:12px;color:#667085'>키워드 발굴·등록 탭</div></div>""", unsafe_allow_html=True)
-    with _nb:
-        st.markdown("""<div style='background:#F0FDF4;border:1px solid #A7F3D0;border-radius:10px;
-padding:16px 18px;text-align:center'>
-<div style='font-size:1.3rem'>📰</div>
-<div style='font-weight:700;color:#101828;font-size:14px;margin:6px 0 4px'>관련 뉴스 수집하기</div>
-<div style='font-size:12px;color:#667085'>관련 뉴스 수집 탭</div></div>""", unsafe_allow_html=True)
-    with _nc:
-        st.markdown("""<div style='background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;
-padding:16px 18px;text-align:center'>
-<div style='font-size:1.3rem'>📋</div>
-<div style='font-weight:700;color:#101828;font-size:14px;margin:6px 0 4px'>PR 활용 관리하기</div>
-<div style='font-size:12px;color:#667085'>PR 활용 관리 탭</div></div>""", unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════
-# TAB 2 · 키워드 관리
+# TAB 2 · 추이 분석·발굴
 # ════════════════════════════════════════════════════════
 with tab2:
-    st.markdown("""<div class="sh-main"><div class="t">키워드 관리</div>
-<div class="s">과거 월 소급 등록, 추적 목록 관리 등 키워드 데이터를 직접 관리합니다.</div></div>""",unsafe_allow_html=True)
-
-    # 메인 등록 폼 (expander 없음 — form 내부 expander가 _arr 원인 중 하나)
-    with st.form("t2_qreg",clear_on_submit=True):
-        qa,qb,qc,qd = st.columns([3,2,2,1.5])
-        with qa: q_kw = st.text_input("키워드 *",placeholder="예: 제로트러스트")
-        with qb: q_us = st.selectbox("활용처 *",USAGES)
-        with qc:
-            _t2_d = date.today().replace(day=1)
-            _t2_months = []
-            for _i in range(12):
-                _t2_months.append(_t2_d.strftime("%Y-%m"))
-                _t2_d = (_t2_d - timedelta(days=1)).replace(day=1)
-            q_month = st.selectbox("등록 월 *", _t2_months, index=0,
-                                   help="현재 월이 기본값입니다. 과거 월 소급 등록도 가능합니다.")
-        with qd:
-            st.markdown("<div style='height:28px'></div>",unsafe_allow_html=True)
-            q_sub = st.form_submit_button("＋ 키워드 등록",use_container_width=True,type="primary")
-
-    # 추가 정보 (form 외부 — expander 대신 collapsible_header)
-    if collapsible_header("추가 정보 입력 (선택)","t2_extra_exp"):
-        with st.container(border=False):
-            ea,eb = st.columns(2)
-            with ea:
-                st.text_input("관련 벤더",placeholder="예: Palo Alto Networks",key="t2_ve_s")
-                st.text_input("아이디어·메모",placeholder="예: 이달 보도자료 핵심 소재",key="t2_id_s")
-            with eb:
-                st.text_input("출처 URL",placeholder="https://...",key="t2_su_s")
-                st.checkbox("등록 후 자동 추적 시작",value=True,key="t2_at_s",
-                            help="체크 시 트렌드 탐색 탭에도 즉시 추가됩니다.")
-
-    if q_sub:
-        kw_t = (q_kw or "").strip()
-        q_ve = st.session_state.get("t2_ve_s","") or ""
-        q_id = st.session_state.get("t2_id_s","") or ""
-        q_su = st.session_state.get("t2_su_s","") or ""
-        q_at = st.session_state.get("t2_at_s", True)
-        if not kw_t:
-            st.warning("키워드를 입력해 주세요.")
-        elif add_keyword(kw_t,q_month,usage_type=q_us,
-                         vendor=q_ve.strip(),idea=q_id.strip(),source_url=q_su.strip()):
-            _inv_derived()
-            if q_at:
-                if add_tracked_keyword(kw_t):
-                    with st.spinner(f"'{kw_t}' 트렌드 데이터 수집 중…"):
-                        collect_single_keyword(kw_t)
-                        _persist_trends_to_gh(kw_t)
-                    load_trends.clear(); _inv_tracked()
-            _month_label = f" ({q_month})" if q_month != CURRENT_MONTH else ""
-            st.success(f"✅ '{kw_t}'{_month_label} 등록 완료!")
-            # 선택 필드 초기화
-            for _k in ["t2_ve_s","t2_id_s","t2_su_s"]:
-                if _k in st.session_state: del st.session_state[_k]
-            st.rerun()
-        else:
-            st.warning("이미 등록된 키워드입니다.")
-
-    st.markdown("<div style='margin-top:1.5rem'></div>",unsafe_allow_html=True)
-    st.markdown("""<div class="sh-sub"><div class="t">급상승 키워드 탐색은 '추이 분석·발굴' 탭으로 이동했습니다</div>
-<div class="s">추이 그래프 옆에서 바로 발굴·등록까지 처리할 수 있습니다.</div></div>""",
-                unsafe_allow_html=True)
-
-
-# ════════════════════════════════════════════════════════
-# TAB 3 · 추이 분석·발굴
-# ════════════════════════════════════════════════════════
-with tab3:
     tracked_kws = load_tracked_keywords()
 
     # ── 2-컬럼 레이아웃: 좌=추이분석·발굴, 우=퀵 등록 ──────
@@ -1546,7 +1455,7 @@ with tab3:
 
 
 # ════════════════════════════════════════════════════════
-# TAB 4 · PR 모니터링 & 관련 뉴스 수집
+# TAB 4 · 관련 뉴스 수집
 # ════════════════════════════════════════════════════════
 with tab4:
     # ── 세션 상태 초기화 ────────────────────────────────
@@ -2406,9 +2315,9 @@ with tab4:
 
 
 # ════════════════════════════════════════════════════════
-# TAB 5 · 활용처 관리
+# TAB 3 · PR 활용 관리
 # ════════════════════════════════════════════════════════
-with tab5:
+with tab3:
     st.markdown("""<div class="sh-main"><div class="t">PR 활용 관리</div>
 <div class="s">뉴스 모니터링에서 선별한 기사와 키워드의 PR 활용처 및 반영 상태를 관리합니다.</div></div>""",
                 unsafe_allow_html=True)
