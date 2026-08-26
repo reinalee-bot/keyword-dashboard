@@ -907,10 +907,10 @@ st.markdown(f"""
 
 tab1,tab2,tab3,tab4,tab5 = st.tabs([
     "📊 모니터링 현황",
-    "🔍 키워드 발굴·등록",
-    "📈 키워드 추이 분석",
+    "📋 키워드 관리",
+    "📈 추이 분석·발굴",
     "📰 관련 뉴스 수집",
-    "📋 PR 활용 관리",
+    "🗂️ PR 활용 관리",
 ])
 
 
@@ -1044,11 +1044,11 @@ padding:16px 18px;text-align:center'>
 
 
 # ════════════════════════════════════════════════════════
-# TAB 2 · 키워드 발굴·등록
+# TAB 2 · 키워드 관리
 # ════════════════════════════════════════════════════════
 with tab2:
-    st.markdown("""<div class="sh-main"><div class="t">키워드 발굴·등록</div>
-<div class="s">급상승 키워드를 확인하거나 PR 모니터링에 필요한 키워드를 직접 등록합니다.</div></div>""",unsafe_allow_html=True)
+    st.markdown("""<div class="sh-main"><div class="t">키워드 관리</div>
+<div class="s">과거 월 소급 등록, 추적 목록 관리 등 키워드 데이터를 직접 관리합니다.</div></div>""",unsafe_allow_html=True)
 
     # 메인 등록 폼 (expander 없음 — form 내부 expander가 _arr 원인 중 하나)
     with st.form("t2_qreg",clear_on_submit=True):
@@ -1105,332 +1105,322 @@ with tab2:
         else:
             st.warning("이미 등록된 키워드입니다.")
 
-    st.markdown("<div style='margin-top:2rem'></div>",unsafe_allow_html=True)
-
-    # ── 뉴스 키워드 발굴 ─────────────────────────────────
-    last_upd = get_last_collection_time()
-    st.markdown(f"""<div class="sh-main">
-<div class="t">급상승 키워드 탐색
-  <span style='font-weight:400;font-size:.82rem;color:#667085'>&nbsp;· 마지막 트렌드 업데이트 {last_upd}</span>
-</div>
-<div class="s">구글 뉴스 RSS 기사 빈도 기반 · 버튼 클릭 시 분석</div></div>""",unsafe_allow_html=True)
-
-    if "t2_news_kws" not in st.session_state: st.session_state["t2_news_kws"] = None
-
-    _,fb,fc = st.columns([5,2,1.5])
-    with fb:
-        if st.button("🔍 키워드 분석 시작",type="primary",use_container_width=True,key="t2_analyze"):
-            with st.spinner("IT 뉴스 키워드 분석 중…"):
-                try: st.session_state["t2_news_kws"] = _fetch_news_keywords_cached()
-                except Exception as e: st.error(f"분석 실패: {e}")
-    with fc:
-        if st.button("캐시 초기화",type="secondary",use_container_width=True,key="t2_rf"):
-            _fetch_news_keywords_cached.clear()
-            st.session_state["t2_news_kws"] = None
-            st.rerun()
-
-    news_data = st.session_state["t2_news_kws"]
-    if news_data is None:
-        st.markdown("""<div class='notice-box'>
-'🔍 키워드 분석 시작' 버튼을 클릭하면 IT 뉴스 기사 빈도 기반 키워드를 분석합니다.
-</div>""",unsafe_allow_html=True)
-    else:
-        news_kws_raw, sources_ok = news_data
-        if not news_kws_raw:
-            st.info("분석된 키워드가 없습니다. 잠시 후 다시 시도해 주세요.")
-        else:
-            tracked_set2 = set(load_tracked_keywords())
-            derived_set2 = set(df_cur["키워드"].tolist()) if not df_cur.empty else set()
-            st.caption(f"📰 {sources_ok}")
-            top8 = news_kws_raw[:8]; rest = news_kws_raw[8:]
-            for rs in range(0,len(top8),4):
-                batch=top8[rs:rs+4]; cols2=st.columns(4,gap="small")
-                for col,(w,cnt) in zip(cols2,batch):
-                    is_t=w in tracked_set2; is_d=w in derived_set2
-                    with col:
-                        with st.container(border=True):
-                            st.markdown(f"<div style='font-size:.96rem;font-weight:700;margin-bottom:4px'>{w}</div>"
-                                        f"<div style='font-size:11.5px;color:#667085;margin-bottom:10px'>언급 {cnt}회</div>",
-                                        unsafe_allow_html=True)
-                            ba,bb = st.columns(2)
-                            with ba:
-                                if is_t: st.markdown("<span style='color:#059669;font-size:12px;font-weight:600'>📌 추적 중</span>",unsafe_allow_html=True)
-                                elif st.button("📌 추적",key=f"t2_tr_{w}",use_container_width=True,type="secondary"):
-                                    add_tracked_keyword(w)
-                                    with st.spinner("수집 중…"):
-                                        collect_single_keyword(w); _persist_trends_to_gh(w); load_trends.clear()
-                                    st.rerun()
-                            with bb:
-                                if is_d: st.markdown("<span style='color:#059669;font-size:12px;font-weight:600'>✅ 도출됨</span>",unsafe_allow_html=True)
-                                elif st.button("＋ 도출",key=f"t2_dr_{w}",use_container_width=True,type="primary"):
-                                    if add_keyword(w,CURRENT_MONTH,discovery_source="뉴스 자동탐지"):
-                                        _inv_derived(); st.rerun()
-                                    else: st.info("이미 등록됨")
-            if rest:
-                st.markdown("<div style='margin-top:1.2rem'></div>",unsafe_allow_html=True)
-                h0,h1,h2,h3 = st.columns([.5,2.5,1.2,3.5])
-                for c_,l_ in zip([h0,h1,h2,h3],["#","키워드","언급","액션"]):
-                    c_.markdown(f"<span class='th'>{l_}</span>",unsafe_allow_html=True)
-                st.markdown("<hr style='margin:4px 0'>",unsafe_allow_html=True)
-                for i_,(w,cnt) in enumerate(rest,start=9):
-                    is_t=w in tracked_set2; is_d=w in derived_set2
-                    r0,r1,r2,r3 = st.columns([.5,2.5,1.2,3.5])
-                    r0.markdown(f"<span class='td' style='color:#667085'>{i_}</span>",unsafe_allow_html=True)
-                    r1.markdown(f"<span class='td' style='font-weight:600'>{w}</span>",unsafe_allow_html=True)
-                    r2.markdown(f"<span class='td'>{cnt}회</span>",unsafe_allow_html=True)
-                    with r3:
-                        ba,bb,_ = st.columns([1.3,1.1,1.5])
-                        with ba:
-                            if not is_t:
-                                if st.button("📌 추적",key=f"t2_rtr_{w}",use_container_width=True,type="secondary"):
-                                    add_tracked_keyword(w)
-                                    with st.spinner("수집 중…"):
-                                        collect_single_keyword(w); _persist_trends_to_gh(w); load_trends.clear()
-                                    st.rerun()
-                            else: st.caption("추적 중")
-                        with bb:
-                            if not is_d:
-                                if st.button("＋ 도출",key=f"t2_rdr_{w}",use_container_width=True,type="primary"):
-                                    if add_keyword(w,CURRENT_MONTH,discovery_source="뉴스 자동탐지"):
-                                        _inv_derived(); st.rerun()
-                            else: st.caption("도출됨")
-                    st.markdown("<hr style='margin:2px 0;border-color:#F7F9FC'>",unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:1.5rem'></div>",unsafe_allow_html=True)
+    st.markdown("""<div class="sh-sub"><div class="t">급상승 키워드 탐색은 '추이 분석·발굴' 탭으로 이동했습니다</div>
+<div class="s">추이 그래프 옆에서 바로 발굴·등록까지 처리할 수 있습니다.</div></div>""",
+                unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════
-# TAB 3 · 키워드 추이 분석
+# TAB 3 · 추이 분석·발굴
 # ════════════════════════════════════════════════════════
 with tab3:
     tracked_kws = load_tracked_keywords()
 
-    st.markdown(f"""<div class="sh-main">
+    # ── 2-컬럼 레이아웃: 좌=추이분석·발굴, 우=퀵 등록 ──────
+    _t3_main, _t3_side = st.columns([13, 7], gap="large")
+
+    # ══════════════════════════════════════════════════════
+    # 우측 패널 — 이번달 PR 활용 추가
+    # ══════════════════════════════════════════════════════
+    with _t3_side:
+        st.markdown("""<div class="sh-main" style="margin-top:0">
+<div class="t" style="font-size:1.05rem">이번달 PR 활용 추가</div>
+<div class="s">추이를 보고 바로 이번 달 도출·반영 키워드를 등록합니다.</div></div>""",
+                    unsafe_allow_html=True)
+
+        _kw_opts = tracked_kws + ["✏️ 직접 입력"]
+        with st.form("t3_quick_add", clear_on_submit=True):
+            _qa_kw_sel = st.selectbox("키워드", _kw_opts, index=0,
+                                      help="추적 중인 키워드를 선택하거나 직접 입력하세요.")
+            _qa_kw_txt = st.text_input("키워드 직접 입력",
+                                       placeholder="예: 제로트러스트",
+                                       label_visibility="collapsed" if _qa_kw_sel != "✏️ 직접 입력" else "visible",
+                                       key="t3_qa_kw_txt",
+                                       disabled=(_qa_kw_sel != "✏️ 직접 입력"))
+            _qa_ct = st.radio("유형", ["PR 기사", "온드미디어"], horizontal=True, key="t3_qa_ct")
+            _qa_cn = st.text_input("콘텐츠명 *", placeholder="예: AI 에이전트 시대 보도자료", key="t3_qa_cn")
+            _qa_url = st.text_input("URL (선택)", placeholder="https://...", key="t3_qa_url")
+            _qa_dt = st.date_input("발행일", value=date.today(), key="t3_qa_dt")
+            _qa_reflect = st.checkbox("반영완료로 바로 등록", value=True,
+                                      help="체크 해제 시 '도출'만 등록합니다.")
+            _qa_track = st.checkbox("추적 키워드에도 추가", value=(_qa_kw_sel=="✏️ 직접 입력"),
+                                    help="트렌드 탭에 추가해 검색 추이를 수집합니다.")
+            _qa_sub = st.form_submit_button("등록", type="primary", use_container_width=True)
+
+        if _qa_sub:
+            _qa_kw = (_qa_kw_txt.strip() if _qa_kw_sel == "✏️ 직접 입력"
+                      else _qa_kw_sel.strip())
+            _qa_cn_v = _qa_cn.strip()
+            if not _qa_kw:
+                st.warning("키워드를 입력해 주세요.")
+            elif _qa_reflect and not _qa_cn_v:
+                st.warning("반영완료 등록 시 콘텐츠명이 필요합니다.")
+            else:
+                _added_kw  = add_keyword(_qa_kw, CURRENT_MONTH, usage_type=_qa_ct,
+                                          discovery_source="추이 분석")
+                if _qa_track and _qa_kw not in tracked_kws:
+                    if add_tracked_keyword(_qa_kw):
+                        with st.spinner(f"'{_qa_kw}' 트렌드 수집 중…"):
+                            collect_single_keyword(_qa_kw)
+                            _persist_trends_to_gh(_qa_kw)
+                        load_trends.clear(); _inv_tracked()
+                if _qa_reflect:
+                    add_content(_qa_kw, CURRENT_MONTH, _qa_ct,
+                                _qa_cn_v, _qa_url.strip(), str(_qa_dt))
+                _inv_derived(); _inv_content()
+                _status_txt = "도출·반영완료" if _qa_reflect else "도출"
+                st.success(f"✅ '{_qa_kw}' {_status_txt} 등록!")
+                st.rerun()
+
+        # ── 이번달 현황 미니 리스트 ───────────────────────
+        st.markdown("<div style='margin-top:1.4rem'></div>", unsafe_allow_html=True)
+        st.markdown(f"""<div class="sh-sub" style="margin-top:0">
+<div class="t" style="font-size:.95rem">{CURRENT_MONTH} 등록 현황</div></div>""",
+                    unsafe_allow_html=True)
+        _t3_cur = load_derived(CURRENT_MONTH)
+        if _t3_cur.empty:
+            st.caption("이번 달 등록된 키워드가 없습니다.")
+        else:
+            _t3_con = load_content(CURRENT_MONTH)
+            _t3_reflected = set(_t3_con["keyword"].tolist()) if not _t3_con.empty else set()
+            for _, _rr in _t3_cur.iterrows():
+                _rkw = _rr["키워드"]
+                _rst = _rr.get("상태","도출")
+                if _rst == "반영완료" or _rkw in _t3_reflected:
+                    _dot = "<span style='color:#059669;font-weight:700'>●</span>"
+                    _lbl = "<span style='color:#059669;font-size:11px'>반영완료</span>"
+                else:
+                    _dot = "<span style='color:#F59E0B;font-weight:700'>○</span>"
+                    _lbl = "<span style='color:#92400e;font-size:11px'>도출</span>"
+                st.markdown(
+                    f"{_dot} <strong style='font-size:13px'>{_rkw}</strong> &nbsp;{_lbl}",
+                    unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════
+    # 좌측 메인 — 추이 분석 + 급상승 키워드 탐색
+    # ══════════════════════════════════════════════════════
+    with _t3_main:
+        st.markdown(f"""<div class="sh-main" style="margin-top:0">
 <div class="t">키워드 추이 분석 · {len(tracked_kws)}개 추적 중</div>
 <div class="s">등록 키워드의 검색 관심도와 변동 추이를 비교해 PR 활용 가능성을 검토합니다.</div></div>""",
-                unsafe_allow_html=True)
+                    unsafe_allow_html=True)
 
-    if "hidden_kws"   not in st.session_state: st.session_state["hidden_kws"]   = set()
-    if "t3_conf_del"  not in st.session_state: st.session_state["t3_conf_del"]  = False
-    st.session_state["hidden_kws"] &= set(tracked_kws)
-    hidden_kws = st.session_state["hidden_kws"]
+        if "hidden_kws"   not in st.session_state: st.session_state["hidden_kws"]   = set()
+        if "t3_conf_del"  not in st.session_state: st.session_state["t3_conf_del"]  = False
+        st.session_state["hidden_kws"] &= set(tracked_kws)
+        hidden_kws = st.session_state["hidden_kws"]
 
-    if tracked_kws:
-        ba_,bb_,bc_,bd_ = st.columns([1.8,1.8,2.2,2.4])
-        with ba_:
-            if st.button("그래프 전체 표시",key="t3_show_all",type="secondary",use_container_width=True):
-                st.session_state["hidden_kws"]=set(); st.rerun()
-        with bb_:
-            if st.button("그래프 전체 숨김",key="t3_hide_all",type="secondary",use_container_width=True):
-                st.session_state["hidden_kws"]=set(tracked_kws); st.rerun()
-        with bc_:
-            if st.button(f"선택 추적 해제 (전체 {len(tracked_kws)}개)",key="t3_del_all",
-                         type="secondary",use_container_width=True):
-                st.session_state["t3_conf_del"]=True
-        with bd_:
-            if st.button("데이터 새로고침",key="t3_refresh_trends",type="primary",
-                         use_container_width=True,help="trends.csv 캐시를 지우고 최신 데이터를 다시 읽습니다"):
-                load_trends.clear()
-                st.rerun()
-
-        if st.session_state["t3_conf_del"]:
-            st.markdown(f"<div class='warn-box'>추적 중인 키워드 <strong>{len(tracked_kws)}개</strong>를 모두 삭제하시겠습니까?</div>",
-                        unsafe_allow_html=True)
-            cc1,cc2 = st.columns([2,2])
-            with cc1:
-                if st.button("취소",key="t3_can",type="secondary"):
-                    st.session_state["t3_conf_del"]=False; st.rerun()
-            with cc2:
-                if st.button("확인 — 전체 삭제",key="t3_ok",type="primary"):
-                    remove_all_tracked(); st.session_state["hidden_kws"]=set()
-                    st.session_state["t3_conf_del"]=False; _inv_tracked(); st.rerun()
-
-        CHIP_COLS = 3
-        for row_start in range(0,len(tracked_kws),CHIP_COLS):
-            batch = tracked_kws[row_start:row_start+CHIP_COLS]
-            widths = []
-            for _ in batch: widths += [4.5,0.6]
-            remaining = CHIP_COLS - len(batch)
-            if remaining>0: widths += [5.1*remaining]
-            chip_cols = st.columns(widths)
-            for j,kw in enumerate(batch):
-                hid = kw in hidden_kws
-                with chip_cols[j*2]:
-                    if st.button(f"{'●' if not hid else '○'} {kw}",key=f"chip_body_{kw}",
-                                 type="primary" if not hid else "secondary",use_container_width=True):
-                        if hid: hidden_kws.discard(kw)
-                        else:   hidden_kws.add(kw)
-                        st.session_state["hidden_kws"]=hidden_kws; st.rerun()
-                with chip_cols[j*2+1]:
-                    if st.button("×",key=f"chip_x_{kw}",type="secondary",
-                                 use_container_width=True,help=f"'{kw}' 추적 삭제"):
-                        remove_tracked_keyword(kw); hidden_kws.discard(kw)
-                        st.session_state["hidden_kws"]=hidden_kws; _inv_tracked(); st.rerun()
-
-    if not tracked_kws:
-        st.info("추적 중인 키워드가 없습니다. 아래에서 추가하세요.")
-
-    na,nb = st.columns([5,1])
-    with na:
-        new_tk = st.text_input("새 추적 키워드 추가",placeholder="예: 제로트러스트",
-                               label_visibility="collapsed",key="t3_new_tk")
-    with nb:
-        if st.button("＋ 추가",type="primary",use_container_width=True,key="t3_add_btn"):
-            kt = new_tk.strip()
-            if not kt: st.warning("키워드를 입력해 주세요.")
-            elif not add_tracked_keyword(kt): st.info(f"'{kt}'는 이미 추적 중입니다.")
-            else:
-                with st.spinner(f"'{kt}' 수집 중…"):
-                    nok,gok = collect_single_keyword(kt)
-                    _persist_trends_to_gh(kt)
+        if tracked_kws:
+            ba_,bb_,bc_,bd_ = st.columns([1.8,1.8,2.2,2.4])
+            with ba_:
+                if st.button("그래프 전체 표시",key="t3_show_all",type="secondary",use_container_width=True):
+                    st.session_state["hidden_kws"]=set(); st.rerun()
+            with bb_:
+                if st.button("그래프 전체 숨김",key="t3_hide_all",type="secondary",use_container_width=True):
+                    st.session_state["hidden_kws"]=set(tracked_kws); st.rerun()
+            with bc_:
+                if st.button(f"선택 추적 해제 (전체 {len(tracked_kws)}개)",key="t3_del_all",
+                             type="secondary",use_container_width=True):
+                    st.session_state["t3_conf_del"]=True
+            with bd_:
+                if st.button("데이터 새로고침",key="t3_refresh_trends",type="primary",
+                             use_container_width=True,help="trends.csv 캐시를 지우고 최신 데이터를 다시 읽습니다"):
                     load_trends.clear()
-                _inv_tracked()
-                st.success(f"추가 완료 — 네이버 {'✅' if nok else '⚠️'} / 구글 {'✅' if gok else '⚠️'}")
-                st.rerun()
+                    st.rerun()
 
-    st.markdown("<div style='margin-top:2rem'></div>",unsafe_allow_html=True)
+            if st.session_state["t3_conf_del"]:
+                st.markdown(f"<div class='warn-box'>추적 중인 키워드 <strong>{len(tracked_kws)}개</strong>를 모두 삭제하시겠습니까?</div>",
+                            unsafe_allow_html=True)
+                cc1,cc2 = st.columns([2,2])
+                with cc1:
+                    if st.button("취소",key="t3_can",type="secondary"):
+                        st.session_state["t3_conf_del"]=False; st.rerun()
+                with cc2:
+                    if st.button("확인 — 전체 삭제",key="t3_ok",type="primary"):
+                        remove_all_tracked(); st.session_state["hidden_kws"]=set()
+                        st.session_state["t3_conf_del"]=False; _inv_tracked(); st.rerun()
 
-    # ── 통합 비교 차트 ────────────────────────────────────
-    if "period_days" not in st.session_state: st.session_state["period_days"]=30
-    if "t3_sel_kws"  not in st.session_state: st.session_state["t3_sel_kws"]=tracked_kws[:3]
-    st.session_state["t3_sel_kws"]=[k for k in st.session_state["t3_sel_kws"] if k in tracked_kws]
+            CHIP_COLS = 3
+            for row_start in range(0,len(tracked_kws),CHIP_COLS):
+                batch = tracked_kws[row_start:row_start+CHIP_COLS]
+                widths = []
+                for _ in batch: widths += [4.5,0.6]
+                remaining = CHIP_COLS - len(batch)
+                if remaining>0: widths += [5.1*remaining]
+                chip_cols = st.columns(widths)
+                for j,kw in enumerate(batch):
+                    hid = kw in hidden_kws
+                    with chip_cols[j*2]:
+                        if st.button(f"{'●' if not hid else '○'} {kw}",key=f"chip_body_{kw}",
+                                     type="primary" if not hid else "secondary",use_container_width=True):
+                            if hid: hidden_kws.discard(kw)
+                            else:   hidden_kws.add(kw)
+                            st.session_state["hidden_kws"]=hidden_kws; st.rerun()
+                    with chip_cols[j*2+1]:
+                        if st.button("×",key=f"chip_x_{kw}",type="secondary",
+                                     use_container_width=True,help=f"'{kw}' 추적 삭제"):
+                            remove_tracked_keyword(kw); hidden_kws.discard(kw)
+                            st.session_state["hidden_kws"]=hidden_kws; _inv_tracked(); st.rerun()
 
-    st.markdown("""<div class="sh-main"><div class="t">통합 검색 추이 비교</div>
+        if not tracked_kws:
+            st.info("추적 중인 키워드가 없습니다. 아래에서 추가하세요.")
+
+        na,nb = st.columns([5,1])
+        with na:
+            new_tk = st.text_input("새 추적 키워드 추가",placeholder="예: 제로트러스트",
+                                   label_visibility="collapsed",key="t3_new_tk")
+        with nb:
+            if st.button("＋ 추가",type="primary",use_container_width=True,key="t3_add_btn"):
+                kt = new_tk.strip()
+                if not kt: st.warning("키워드를 입력해 주세요.")
+                elif not add_tracked_keyword(kt): st.info(f"'{kt}'는 이미 추적 중입니다.")
+                else:
+                    with st.spinner(f"'{kt}' 수집 중…"):
+                        nok,gok = collect_single_keyword(kt)
+                        _persist_trends_to_gh(kt)
+                        load_trends.clear()
+                    _inv_tracked()
+                    st.success(f"추가 완료 — 네이버 {'✅' if nok else '⚠️'} / 구글 {'✅' if gok else '⚠️'}")
+                    st.rerun()
+
+        st.markdown("<div style='margin-top:2rem'></div>",unsafe_allow_html=True)
+
+        # ── 통합 비교 차트 ────────────────────────────────
+        if "period_days" not in st.session_state: st.session_state["period_days"]=30
+        if "t3_sel_kws"  not in st.session_state: st.session_state["t3_sel_kws"]=tracked_kws[:3]
+        st.session_state["t3_sel_kws"]=[k for k in st.session_state["t3_sel_kws"] if k in tracked_kws]
+
+        st.markdown("""<div class="sh-main"><div class="t">통합 검색 추이 비교</div>
 <div class="s">최대 5개 키워드 동시 비교</div></div>""",unsafe_allow_html=True)
 
-    ca_kw,ca_pr = st.columns([7,3])
-    with ca_kw:
-        sel_kws = st.multiselect("비교 키워드 (최대 5개)",options=tracked_kws,
-                                  default=st.session_state["t3_sel_kws"][:5],
-                                  max_selections=5,placeholder="키워드를 선택하세요",
-                                  key="t3_ms_kw")
-        st.session_state["t3_sel_kws"]=sel_kws
-    with ca_pr:
-        PERIODS={"7일":7,"30일":30,"90일":90}
-        pl=st.radio("기간",list(PERIODS.keys()),horizontal=True,
-                    index=list(PERIODS.values()).index(st.session_state["period_days"]),
-                    key="t3_period_r")
-        st.session_state["period_days"]=PERIODS[pl]
+        ca_kw,ca_pr = st.columns([7,3])
+        with ca_kw:
+            sel_kws = st.multiselect("비교 키워드 (최대 5개)",options=tracked_kws,
+                                      default=st.session_state["t3_sel_kws"][:5],
+                                      max_selections=5,placeholder="키워드를 선택하세요",
+                                      key="t3_ms_kw")
+            st.session_state["t3_sel_kws"]=sel_kws
+        with ca_pr:
+            PERIODS={"7일":7,"30일":30,"90일":90}
+            pl=st.radio("기간",list(PERIODS.keys()),horizontal=True,
+                        index=list(PERIODS.values()).index(st.session_state["period_days"]),
+                        key="t3_period_r")
+            st.session_state["period_days"]=PERIODS[pl]
 
-    period_days = st.session_state["period_days"]
-    cutoff      = pd.Timestamp.today().normalize()-pd.Timedelta(days=period_days)
-    df_tr       = load_trends()
+        period_days = st.session_state["period_days"]
+        cutoff      = pd.Timestamp.today().normalize()-pd.Timedelta(days=period_days)
+        df_tr       = load_trends()
 
-    if not sel_kws:
-        st.info("위에서 비교할 키워드를 선택해 주세요.")
-    elif df_tr.empty:
-        st.warning("트렌드 데이터가 없습니다. GitHub Actions 수집 후 다시 확인해 주세요.")
-    else:
-        df_period = df_tr[(df_tr["keyword"].isin(sel_kws))&(df_tr["date"]>=cutoff)]
-        src_choice= st.radio("소스",["네이버 데이터랩","구글 트렌드"],horizontal=True,key="t3_src_r")
-        src_key   = "naver" if "네이버" in src_choice else "google"
+        if not sel_kws:
+            st.info("위에서 비교할 키워드를 선택해 주세요.")
+        elif df_tr.empty:
+            st.warning("트렌드 데이터가 없습니다. GitHub Actions 수집 후 다시 확인해 주세요.")
+        else:
+            df_period = df_tr[(df_tr["keyword"].isin(sel_kws))&(df_tr["date"]>=cutoff)]
+            src_choice= st.radio("소스",["네이버 데이터랩","구글 트렌드"],horizontal=True,key="t3_src_r")
+            src_key   = "naver" if "네이버" in src_choice else "google"
 
-        vis_kws = [k for k in sel_kws if k not in hidden_kws]
-        if vis_kws:
-            df_s  = df_period[df_period["source"]==src_key]
-            df_s2 = df_s[df_s["keyword"].isin(vis_kws)] if not df_s.empty else pd.DataFrame()
-            dw    = to_weekly(df_s2) if not df_s2.empty else pd.DataFrame()
-            if not dw.empty:
-                COLORS=["#2F6BFF","#10B981","#F59E0B","#EF4444","#8B5CF6"]
-                kw_list=dw["키워드"].unique().tolist()
-                cmap={k:COLORS[i%len(COLORS)] for i,k in enumerate(kw_list)}
-                fig=px.line(dw,x="주차",y="평균 관심도",color="키워드",
-                            markers=True,line_shape="spline",height=380,color_discrete_map=cmap)
-                fig.update_layout(plot_bgcolor="white",paper_bgcolor="white",
-                                  font=dict(family="Pretendard,sans-serif"),
-                                  yaxis=dict(range=[0,105],gridcolor="#f0f0f0"),
-                                  xaxis=dict(gridcolor="#f0f0f0"),
-                                  margin=dict(l=10,r=10,t=10,b=10),hovermode="x unified",
-                                  legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
-                fig.update_traces(line_width=2.5,marker_size=6)
-                st.plotly_chart(fig,use_container_width=True,
-                                key=f"t3_chart_{src_key}_{period_days}")
-            else:
-                st.caption("선택한 기간에 표시할 수 있는 데이터가 없습니다.")
+            vis_kws = [k for k in sel_kws if k not in hidden_kws]
+            if vis_kws:
+                df_s  = df_period[df_period["source"]==src_key]
+                df_s2 = df_s[df_s["keyword"].isin(vis_kws)] if not df_s.empty else pd.DataFrame()
+                dw    = to_weekly(df_s2) if not df_s2.empty else pd.DataFrame()
+                if not dw.empty:
+                    COLORS=["#2F6BFF","#10B981","#F59E0B","#EF4444","#8B5CF6"]
+                    kw_list=dw["키워드"].unique().tolist()
+                    cmap={k:COLORS[i%len(COLORS)] for i,k in enumerate(kw_list)}
+                    fig=px.line(dw,x="주차",y="평균 관심도",color="키워드",
+                                markers=True,line_shape="spline",height=380,color_discrete_map=cmap)
+                    fig.update_layout(plot_bgcolor="white",paper_bgcolor="white",
+                                      font=dict(family="Pretendard,sans-serif"),
+                                      yaxis=dict(range=[0,105],gridcolor="#f0f0f0"),
+                                      xaxis=dict(gridcolor="#f0f0f0"),
+                                      margin=dict(l=10,r=10,t=10,b=10),hovermode="x unified",
+                                      legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1))
+                    fig.update_traces(line_width=2.5,marker_size=6)
+                    st.plotly_chart(fig,use_container_width=True,
+                                    key=f"t3_chart_{src_key}_{period_days}")
+                else:
+                    st.caption("선택한 기간에 표시할 수 있는 데이터가 없습니다.")
 
-        # ── 트렌드 요약 카드 (완전 독립 사전계산) ────────────
-        st.markdown(f"""<div class="sh-sub" style="margin-top:2rem">
+            # ── 트렌드 요약 카드 ─────────────────────────
+            st.markdown(f"""<div class="sh-sub" style="margin-top:2rem">
 <div class="t">키워드별 추이 요약</div>
 <div class="s">최근 {period_days}일 · 각 키워드 독립 처리</div></div>""",unsafe_allow_html=True)
 
-        # STEP 1: 모든 통계 사전 계산 (렌더링 전)
-        _pre: dict = {}
-        for _kw in sel_kws:
-            _dn = df_period.loc[(df_period["keyword"]==_kw)&(df_period["source"]=="naver")].copy()
-            _dg = df_period.loc[(df_period["keyword"]==_kw)&(df_period["source"]=="google")].copy()
-            _pre[_kw]={"n":compute_kw_stats(_dn),"g":compute_kw_stats(_dg),"dn":_dn,"dg":_dg}
+            _pre: dict = {}
+            for _kw in sel_kws:
+                _dn = df_period.loc[(df_period["keyword"]==_kw)&(df_period["source"]=="naver")].copy()
+                _dg = df_period.loc[(df_period["keyword"]==_kw)&(df_period["source"]=="google")].copy()
+                _pre[_kw]={"n":compute_kw_stats(_dn),"g":compute_kw_stats(_dg),"dn":_dn,"dg":_dg}
 
-        # STEP 2: 렌더링 (_pre 에서만 읽기)
-        def _chg_fmt(v):
-            return (f"+{v:.1f}%","#059669") if v>=0 else (f"{v:.1f}%","#DC2626")
+            def _chg_fmt(v):
+                return (f"+{v:.1f}%","#059669") if v>=0 else (f"{v:.1f}%","#DC2626")
 
-        NCOLS   = min(3,len(sel_kws)) if sel_kws else 1
-        COLORS5 = ["#2F6BFF","#10B981","#F59E0B","#EF4444","#8B5CF6"]
-        card_cols = st.columns(NCOLS,gap="medium")
+            NCOLS   = min(3,len(sel_kws)) if sel_kws else 1
+            COLORS5 = ["#2F6BFF","#10B981","#F59E0B","#EF4444","#8B5CF6"]
+            card_cols = st.columns(NCOLS,gap="medium")
 
-        for idx_k,_kw in enumerate(sel_kws):
-            _td  = _pre[_kw]
-            _sn  = _td["n"]; _sg = _td["g"]
-            _use = _sn if _sn else _sg
-            _ref_df  = _td["dn"] if _sn else _td["dg"]
-            _col_c   = COLORS5[idx_k%len(COLORS5)]
+            for idx_k,_kw in enumerate(sel_kws):
+                _td  = _pre[_kw]
+                _sn  = _td["n"]; _sg = _td["g"]
+                _use = _sn if _sn else _sg
+                _ref_df  = _td["dn"] if _sn else _td["dg"]
+                _col_c   = COLORS5[idx_k%len(COLORS5)]
 
-            with card_cols[idx_k%NCOLS]:
-                with st.container(border=True):
-                    st.markdown(f"<div class='tc-kw'>{_kw}</div>",unsafe_allow_html=True)
+                with card_cols[idx_k%NCOLS]:
+                    with st.container(border=True):
+                        st.markdown(f"<div class='tc-kw'>{_kw}</div>",unsafe_allow_html=True)
 
-                    if not _use:
-                        msg = ("데이터 부족 (최소 4주 필요)" if not _ref_df.empty
-                               else "데이터 수집 대기 중" if _kw in tracked_kws else "추적 키워드 아님")
-                        st.markdown(f"""<div class='tc-wait'>
+                        if not _use:
+                            msg = ("데이터 부족 (최소 4주 필요)" if not _ref_df.empty
+                                   else "데이터 수집 대기 중" if _kw in tracked_kws else "추적 키워드 아님")
+                            st.markdown(f"""<div class='tc-wait'>
 <div class='tc-wait-title'>{msg}</div>
 <div class='tc-wait-sub'>트렌드 데이터가 확보되면 자동으로 분석됩니다.</div></div>""",
-                                    unsafe_allow_html=True)
-                        continue
+                                        unsafe_allow_html=True)
+                            continue
 
-                    if _sn and _sg:
-                        # 네이버 + 구글 양쪽 데이터 모두 있을 때: 2열 나란히 표시
-                        _nc,_gc = st.columns(2)
-                        with _nc:
-                            nwcs,nwcc = _chg_fmt(_sn['wk_chg'])
-                            nacs,nacc = _chg_fmt(_sn['avg_chg'])
-                            st.markdown(f"""<div style='font-size:11px;font-weight:700;color:#2F6BFF;margin-bottom:4px'>네이버 데이터랩</div>
+                        if _sn and _sg:
+                            _nc,_gc = st.columns(2)
+                            with _nc:
+                                nwcs,nwcc = _chg_fmt(_sn['wk_chg'])
+                                nacs,nacc = _chg_fmt(_sn['avg_chg'])
+                                st.markdown(f"""<div style='font-size:11px;font-weight:700;color:#2F6BFF;margin-bottom:4px'>네이버 데이터랩</div>
 <div class='tc-row'>관심도 &nbsp;<strong>{_sn['current']:.0f}</strong></div>
 <div class='tc-row'>전주 대비 &nbsp;<strong style='color:{nwcc}'>{nwcs}</strong></div>
 <div class='tc-row'>4주 평균 &nbsp;<strong>{_sn['avg4']:.1f}</strong></div>
 <div class='tc-row'>이전 4주 대비 &nbsp;<strong style='color:{nacc}'>{nacs}</strong></div>""",unsafe_allow_html=True)
-                        with _gc:
-                            gwcs,gwcc = _chg_fmt(_sg['wk_chg'])
-                            gacs,gacc = _chg_fmt(_sg['avg_chg'])
-                            st.markdown(f"""<div style='font-size:11px;font-weight:700;color:#10B981;margin-bottom:4px'>구글 트렌드</div>
+                            with _gc:
+                                gwcs,gwcc = _chg_fmt(_sg['wk_chg'])
+                                gacs,gacc = _chg_fmt(_sg['avg_chg'])
+                                st.markdown(f"""<div style='font-size:11px;font-weight:700;color:#10B981;margin-bottom:4px'>구글 트렌드</div>
 <div class='tc-row'>관심도 &nbsp;<strong>{_sg['current']:.0f}</strong></div>
 <div class='tc-row'>전주 대비 &nbsp;<strong style='color:{gwcc}'>{gwcs}</strong></div>
 <div class='tc-row'>4주 평균 &nbsp;<strong>{_sg['avg4']:.1f}</strong></div>
 <div class='tc-row'>이전 4주 대비 &nbsp;<strong style='color:{gacc}'>{gacs}</strong></div>""",unsafe_allow_html=True)
-                        try:    peak_str=pd.Timestamp(_td["dn"].loc[_td["dn"]["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
-                        except: peak_str="—"
-                        try:    last_str=pd.Timestamp(_td["dn"]["date"].max()).strftime("%Y.%m.%d")
-                        except: last_str="—"
-                        st.markdown(f"""<div class='tc-row' style='margin-top:6px'>최고점 날짜 &nbsp;<strong>{peak_str}</strong></div>
+                            try:    peak_str=pd.Timestamp(_td["dn"].loc[_td["dn"]["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
+                            except: peak_str="—"
+                            try:    last_str=pd.Timestamp(_td["dn"]["date"].max()).strftime("%Y.%m.%d")
+                            except: last_str="—"
+                            st.markdown(f"""<div class='tc-row' style='margin-top:6px'>최고점 날짜 &nbsp;<strong>{peak_str}</strong></div>
 <div class='tc-row'>마지막 데이터 &nbsp;<strong>{last_str}</strong></div>
 <div class='tc-row'>검색량 추세 &nbsp; {_trend_badge(_sn['trend_label'],_sn['trend_tip'])}</div>""",unsafe_allow_html=True)
-                    else:
-                        # 단일 소스 — 어느 소스가 있고 없는지 명확히 표시
-                        if _sn:
-                            _src_color = "#2F6BFF"
-                            _src_lbl   = "네이버 데이터랩"
-                            _miss_lbl  = "구글 트렌드"
-                            _miss_reason = "검색량 부족"
                         else:
-                            _src_color = "#10B981"
-                            _src_lbl   = "구글 트렌드"
-                            _miss_lbl  = "네이버 데이터랩"
-                            _miss_reason = "데이터 없음"
-                        wcs,wcc = _chg_fmt(_use['wk_chg'])
-                        acs,acc = _chg_fmt(_use['avg_chg'])
-                        try:    peak_str=pd.Timestamp(_ref_df.loc[_ref_df["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
-                        except: peak_str="—"
-                        try:    last_str=pd.Timestamp(_ref_df["date"].max()).strftime("%Y.%m.%d")
-                        except: last_str="—"
-                        st.markdown(f"""
+                            if _sn:
+                                _src_color = "#2F6BFF"; _src_lbl = "네이버 데이터랩"
+                                _miss_lbl  = "구글 트렌드"; _miss_reason = "검색량 부족"
+                            else:
+                                _src_color = "#10B981"; _src_lbl = "구글 트렌드"
+                                _miss_lbl  = "네이버 데이터랩"; _miss_reason = "데이터 없음"
+                            wcs,wcc = _chg_fmt(_use['wk_chg'])
+                            acs,acc = _chg_fmt(_use['avg_chg'])
+                            try:    peak_str=pd.Timestamp(_ref_df.loc[_ref_df["ratio"].idxmax(),"date"]).strftime("%Y.%m.%d")
+                            except: peak_str="—"
+                            try:    last_str=pd.Timestamp(_ref_df["date"].max()).strftime("%Y.%m.%d")
+                            except: last_str="—"
+                            st.markdown(f"""
 <div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>
   <span style='font-size:11px;font-weight:700;color:{_src_color}'>{_src_lbl}</span>
   <span style='font-size:10px;color:#94A3B8;background:#F1F5F9;border-radius:10px;padding:1px 7px'>{_miss_lbl}: {_miss_reason}</span>
@@ -1444,26 +1434,115 @@ with tab3:
 <div class='tc-row'>검색량 추세 &nbsp; {_trend_badge(_use['trend_label'],_use['trend_tip'])}</div>
 """,unsafe_allow_html=True)
 
-                    _sp = (_sn.get("series") if _sn and _sn.get("n",0)>=3
-                           else (_sg.get("series") if _sg and _sg.get("n",0)>=3 else None))
-                    if _sp is not None:
-                        _sp_key=f"sp_{hashlib.md5(_kw.encode()).hexdigest()[:6]}_{idx_k}_{period_days}_{src_key}"
-                        st.plotly_chart(_sparkline(_sp,_col_c),use_container_width=True,
-                                        config={"displayModeBar":False},key=_sp_key)
+                        _sp = (_sn.get("series") if _sn and _sn.get("n",0)>=3
+                               else (_sg.get("series") if _sg and _sg.get("n",0)>=3 else None))
+                        if _sp is not None:
+                            _sp_key=f"sp_{hashlib.md5(_kw.encode()).hexdigest()[:6]}_{idx_k}_{period_days}_{src_key}"
+                            st.plotly_chart(_sparkline(_sp,_col_c),use_container_width=True,
+                                            config={"displayModeBar":False},key=_sp_key)
 
-        # 원본 데이터 보기 (collapsible_header)
-        st.markdown("<div style='margin-top:.8rem'></div>",unsafe_allow_html=True)
-        if collapsible_header("원본 트렌드 데이터 보기","t3_raw_exp"):
-            df_raw = df_period[df_period["source"]==src_key].copy() if "df_period" in dir() and not df_period.empty else pd.DataFrame()
-            if not df_raw.empty:
-                df_raw["date"]=df_raw["date"].dt.strftime("%Y-%m-%d")
-                st.dataframe(
-                    df_raw[["keyword","date","ratio"]].rename(
-                        columns={"keyword":"키워드","date":"날짜","ratio":"관심도"})
-                    .sort_values("날짜",ascending=False).head(60),
-                    use_container_width=True,hide_index=True)
+            st.markdown("<div style='margin-top:.8rem'></div>",unsafe_allow_html=True)
+            if collapsible_header("원본 트렌드 데이터 보기","t3_raw_exp"):
+                df_raw = df_period[df_period["source"]==src_key].copy() if not df_period.empty else pd.DataFrame()
+                if not df_raw.empty:
+                    df_raw["date"]=df_raw["date"].dt.strftime("%Y-%m-%d")
+                    st.dataframe(
+                        df_raw[["keyword","date","ratio"]].rename(
+                            columns={"keyword":"키워드","date":"날짜","ratio":"관심도"})
+                        .sort_values("날짜",ascending=False).head(60),
+                        use_container_width=True,hide_index=True)
+                else:
+                    st.info("해당 조건에 데이터가 없습니다.")
+
+        # ── 급상승 키워드 탐색 (Tab 2에서 이동) ──────────────
+        st.markdown("<div style='margin-top:2.5rem'></div>",unsafe_allow_html=True)
+        last_upd = get_last_collection_time()
+        st.markdown(f"""<div class="sh-main">
+<div class="t">급상승 키워드 탐색
+  <span style='font-weight:400;font-size:.82rem;color:#667085'>&nbsp;· 마지막 트렌드 업데이트 {last_upd}</span>
+</div>
+<div class="s">구글 뉴스 RSS 기사 빈도 기반 · 버튼 클릭 시 분석</div></div>""",unsafe_allow_html=True)
+
+        if "t3_news_kws" not in st.session_state: st.session_state["t3_news_kws"] = None
+
+        _,fb,fc = st.columns([5,2,1.5])
+        with fb:
+            if st.button("🔍 키워드 분석 시작",type="primary",use_container_width=True,key="t3_analyze"):
+                with st.spinner("IT 뉴스 키워드 분석 중…"):
+                    try: st.session_state["t3_news_kws"] = _fetch_news_keywords_cached()
+                    except Exception as e: st.error(f"분석 실패: {e}")
+        with fc:
+            if st.button("캐시 초기화",type="secondary",use_container_width=True,key="t3_rf"):
+                _fetch_news_keywords_cached.clear()
+                st.session_state["t3_news_kws"] = None
+                st.rerun()
+
+        news_data3 = st.session_state["t3_news_kws"]
+        if news_data3 is None:
+            st.markdown("""<div class='notice-box'>
+'🔍 키워드 분석 시작' 버튼을 클릭하면 IT 뉴스 기사 빈도 기반 키워드를 분석합니다.
+</div>""",unsafe_allow_html=True)
+        else:
+            news_kws_raw3, sources_ok3 = news_data3
+            if not news_kws_raw3:
+                st.info("분석된 키워드가 없습니다. 잠시 후 다시 시도해 주세요.")
             else:
-                st.info("해당 조건에 데이터가 없습니다.")
+                tracked_set3 = set(load_tracked_keywords())
+                derived_set3 = set(df_cur["키워드"].tolist()) if not df_cur.empty else set()
+                st.caption(f"📰 {sources_ok3}")
+                top8 = news_kws_raw3[:8]; rest3 = news_kws_raw3[8:]
+                for rs in range(0,len(top8),4):
+                    batch=top8[rs:rs+4]; cols2=st.columns(4,gap="small")
+                    for col,(w,cnt) in zip(cols2,batch):
+                        is_t=w in tracked_set3; is_d=w in derived_set3
+                        with col:
+                            with st.container(border=True):
+                                st.markdown(f"<div style='font-size:.96rem;font-weight:700;margin-bottom:4px'>{w}</div>"
+                                            f"<div style='font-size:11.5px;color:#667085;margin-bottom:10px'>언급 {cnt}회</div>",
+                                            unsafe_allow_html=True)
+                                ba,bb = st.columns(2)
+                                with ba:
+                                    if is_t: st.markdown("<span style='color:#059669;font-size:12px;font-weight:600'>📌 추적 중</span>",unsafe_allow_html=True)
+                                    elif st.button("📌 추적",key=f"t3_tr_{w}",use_container_width=True,type="secondary"):
+                                        add_tracked_keyword(w)
+                                        with st.spinner("수집 중…"):
+                                            collect_single_keyword(w); _persist_trends_to_gh(w); load_trends.clear()
+                                        st.rerun()
+                                with bb:
+                                    if is_d: st.markdown("<span style='color:#059669;font-size:12px;font-weight:600'>✅ 도출됨</span>",unsafe_allow_html=True)
+                                    elif st.button("＋ 도출",key=f"t3_dr_{w}",use_container_width=True,type="primary"):
+                                        if add_keyword(w,CURRENT_MONTH,discovery_source="뉴스 자동탐지"):
+                                            _inv_derived(); st.rerun()
+                                        else: st.info("이미 등록됨")
+                if rest3:
+                    st.markdown("<div style='margin-top:1.2rem'></div>",unsafe_allow_html=True)
+                    h0,h1,h2,h3 = st.columns([.5,2.5,1.2,3.5])
+                    for c_,l_ in zip([h0,h1,h2,h3],["#","키워드","언급","액션"]):
+                        c_.markdown(f"<span class='th'>{l_}</span>",unsafe_allow_html=True)
+                    st.markdown("<hr style='margin:4px 0'>",unsafe_allow_html=True)
+                    for i_,(w,cnt) in enumerate(rest3,start=9):
+                        is_t=w in tracked_set3; is_d=w in derived_set3
+                        r0,r1,r2,r3 = st.columns([.5,2.5,1.2,3.5])
+                        r0.markdown(f"<span class='td' style='color:#667085'>{i_}</span>",unsafe_allow_html=True)
+                        r1.markdown(f"<span class='td' style='font-weight:600'>{w}</span>",unsafe_allow_html=True)
+                        r2.markdown(f"<span class='td'>{cnt}회</span>",unsafe_allow_html=True)
+                        with r3:
+                            ba,bb,_ = st.columns([1.3,1.1,1.5])
+                            with ba:
+                                if not is_t:
+                                    if st.button("📌 추적",key=f"t3_rtr_{w}",use_container_width=True,type="secondary"):
+                                        add_tracked_keyword(w)
+                                        with st.spinner("수집 중…"):
+                                            collect_single_keyword(w); _persist_trends_to_gh(w); load_trends.clear()
+                                        st.rerun()
+                                else: st.caption("추적 중")
+                            with bb:
+                                if not is_d:
+                                    if st.button("＋ 도출",key=f"t3_rdr_{w}",use_container_width=True,type="primary"):
+                                        if add_keyword(w,CURRENT_MONTH,discovery_source="뉴스 자동탐지"):
+                                            _inv_derived(); st.rerun()
+                                else: st.caption("도출됨")
+                        st.markdown("<hr style='margin:2px 0;border-color:#F7F9FC'>",unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════
