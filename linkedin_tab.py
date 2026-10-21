@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import github_storage as gh
+import linkedin_import as li_import
 
 # ── 상수 ─────────────────────────────────────────────────────
 _LINKEDIN_CSV   = "data/linkedin_posts.csv"
@@ -205,6 +206,16 @@ LinkedIn 게시물 분석에서 확인한 수치를 입력하면,
 <strong>결과는 참고용 상관관계로 해석합니다.</strong>
 </div>""", unsafe_allow_html=True)
 
+    # ── LinkedIn 파일 가져오기 (Excel / CSV)
+    li_import.render_import_section(
+        existing_df=df,
+        prefix=prefix,
+        ss_key=_ss_key,
+        on_save=lambda df_new: _save(df_new, "feat: LinkedIn Excel 가져오기"),
+    )
+    # 가져오기 후 세션 상태 갱신
+    df = st.session_state[_ss_key]
+
     # ── 상단 버튼 행
     col_btn1, col_btn2, col_btn3, _ = st.columns([1.5, 1.5, 1.5, 6])
     with col_btn1:
@@ -227,8 +238,9 @@ LinkedIn 게시물 분석에서 확인한 수치를 입력하면,
                            mime="text/csv", key=f"{prefix}csv_tmpl",
                            use_container_width=True)
 
-    # ── CSV 불러오기
-    with st.expander("📂 CSV 불러오기"):
+    # ── CSV 직접 불러오기 (보조 기능)
+    with st.expander("📂 CSV 직접 불러오기 (보조)"):
+        st.caption("이미 작성한 linkedin_posts.csv 형식 파일을 전체 교체하는 경우에만 사용하세요.")
         uploaded = st.file_uploader("linkedin_posts.csv 형식",
                                     type="csv", key=f"{prefix}csv_up")
         if uploaded:
@@ -288,6 +300,9 @@ LinkedIn 게시물 분석에서 확인한 수치를 입력하면,
 
     with sub4:
         _render_charts(df_c, prefix)
+
+    # ── 방문자 특성 섹션 (파일 가져오기에서 Visitors 파일 업로드 시 표시)
+    li_import.render_visitors_section(prefix)
 
 
 # ── 게시물 등록/수정 폼 ───────────────────────────────────────
