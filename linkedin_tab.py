@@ -1,11 +1,13 @@
 """
-linkedin_tab.py — 📣 LinkedIn 성과 분석 탭
+linkedin_tab.py — 📣 LinkedIn 키워드·콘텐츠 성과 탭
 
-기본 흐름:
-  LinkedIn Company Page 관리자 > 분석 > 게시물 > 내보내기(.xls/.xlsx)
-  → 업로드 → 자동 분석 → 인사이트 표시
+목적:
+  LinkedIn Content Excel을 기반으로,
+  특정 키워드·해시태그를 포함한 게시물이 LinkedIn 내에서 기록한
+  노출·클릭·반응·참여율을 관찰한다.
 
-LinkedIn 로그인 / 크롤링 / 비공식 API 미사용.
+  GA4·UTM 유입 측정은 이 탭의 범위가 아님 (별도 분리).
+  LinkedIn 로그인 / 크롤링 / 비공식 API 미사용.
 """
 
 from __future__ import annotations
@@ -31,14 +33,13 @@ _COLS = [
     "post_format", "campaign", "content_type", "hashtags",
     "impressions", "views", "external_views", "clicks", "ctr",
     "reactions", "comments", "reposts", "followers", "engagement_rate",
-    "utm_content", "ga4_sessions",
+    "utm_content", "ga4_sessions",   # 미래 연동용 구조 보존, UI에서 미표시
     "added_at", "updated_at",
 ]
 
 _NUM_COLS = [
     "impressions", "views", "external_views", "clicks", "ctr",
     "reactions", "comments", "reposts", "followers", "engagement_rate",
-    "ga4_sessions",
 ]
 
 
@@ -121,8 +122,10 @@ def _render_upload(df: pd.DataFrame, prefix: str, ss_df: str) -> None:
         st.markdown("""
 <div style="background:#EFF6FF;border-left:4px solid #3B82F6;
      padding:10px 14px;border-radius:6px;margin-bottom:.75rem;font-size:13px;color:#374151">
-<b>LinkedIn 관리자 > 분석 > 게시물 > 내보내기</b>로 받은 Excel 파일을 그대로 올리세요.<br>
-게시물·해시태그·성과를 자동으로 가져옵니다. 같은 게시물을 다시 올리면 최신 수치로 갱신됩니다.
+LinkedIn Content Excel을 업로드하면 게시물 본문에서 키워드와 해시태그를 자동 추출하고,
+해당 키워드를 포함한 게시물의 <b>노출·클릭·반응·참여율</b>을 비교합니다.<br>
+결과는 주제, 이미지, 게시 시점 등의 영향을 함께 받는 <b>관찰치</b>이며
+키워드 또는 해시태그 단독 효과를 뜻하지 않습니다.
 </div>""", unsafe_allow_html=True)
 
         uploaded = st.file_uploader(
@@ -295,7 +298,7 @@ def _render_summary(df: pd.DataFrame, prefix: str) -> None:
             f" ~ {df['_pub'].max().strftime('%Y-%m-%d') if df['_pub'].notna().any() else '?'})에 "
             f"총 **{n}개** 게시물을 발행했습니다. "
             f"**{top_eng['title'][:30]}…** 이 참여율 **{top_eng['_eng_pct']:.1f}%** 로 가장 높았고, "
-            f"**{top_clk['title'][:30]}…** 이 **{int(top_clk['impressions']):,}회** 노출·**{int(top_clk['clicks']):,}회** 클릭으로 도달·유입 관심을 가장 많이 만들었습니다."
+            f"**{top_clk['title'][:30]}…** 이 **{int(top_clk['impressions']):,}회** 노출·**{int(top_clk['clicks']):,}회** 클릭으로 LinkedIn 내 도달과 관심을 가장 많이 만들었습니다."
         )
         st.info(summary)
     except Exception:
@@ -617,7 +620,7 @@ def _render_manual_form(df: pd.DataFrame, prefix: str, ss_df: str) -> None:
                     "reposts"        : f_rep if f_rep > 0 else np.nan,
                     "followers"      : np.nan,
                     "engagement_rate": f_eng / 100 if f_eng > 0 else np.nan,
-                    "utm_content"    : "",
+                    "utm_content"    : "",    # 미래 연동 구조 보존
                     "ga4_sessions"   : np.nan,
                     "added_at"       : now_str,
                     "updated_at"     : now_str,
