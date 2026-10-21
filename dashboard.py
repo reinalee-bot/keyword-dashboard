@@ -15,6 +15,7 @@ import github_storage as gh
 import news_fetcher as nf
 from collector import collect_single_keyword
 import monitoring as mon
+import analytics
 import monitoring_review_store as mrs
 from monitoring_tab_helpers import (
     today_kst, monitoring_config_version,
@@ -52,6 +53,9 @@ USAGES = ["PR 기사","온드미디어","공통"]
 # ── 페이지 설정 ───────────────────────────────────────────
 st.set_page_config(page_title="뉴스 & 트렌드 모니터링 | SCK·STK",
                    page_icon="📊", layout="wide")
+
+# ── GA4 태그 주입 (Measurement ID 없으면 무시) ────────────────
+analytics.inject_ga4_tag()
 
 # ── CSS ──────────────────────────────────────────────────────
 # 핵심 원칙:
@@ -912,6 +916,15 @@ tab1,tab2,tab3,tab4 = st.tabs([
     "📰 관련 뉴스 수집",
 ])
 
+# ── GA4: 첫 진입 이벤트 + 탭 전환 감지 ──────────────────────
+_qp = st.query_params
+analytics.event_dashboard_view(
+    utm_source=_qp.get("utm_source", ""),
+    utm_campaign=_qp.get("utm_campaign", ""),
+    utm_content=_qp.get("utm_content", ""),
+)
+analytics.track_active_tab()
+
 
 # ════════════════════════════════════════════════════════
 # TAB 1 · 모니터링 현황
@@ -984,10 +997,11 @@ with tab1:
             with pd.ExcelWriter(buf_m,engine="openpyxl") as w: dfm.to_excel(w,index=False,sheet_name="월별KPI")
             cc,_ = st.columns([2,5])
             with cc:
-                st.download_button("⬇ 엑셀 다운로드",buf_m.getvalue(),
+                if st.download_button("⬇ 엑셀 다운로드",buf_m.getvalue(),
                                    file_name=f"kpi_{CURRENT_MONTH}.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   key="t1_dl_m")
+                                   key="t1_dl_m"):
+                    analytics.event_export_download("excel_kpi", "모니터링 현황")
             _render_monthly_table(dfm)
 
             # ── 월별 도출 키워드 목록 ──────────────────────
@@ -1077,6 +1091,9 @@ with tab2:
                 if _qa_reflect:
                     add_content(_qa_kw, CURRENT_MONTH, _qa_ct,
                                 _qa_cn_v, _qa_url.strip(), str(_qa_dt))
+                    analytics.event_pr_action("quick_reflect", _qa_ct)
+                else:
+                    analytics.event_pr_action("quick_derive", _qa_ct)
                 _inv_derived(); _inv_content()
                 _status_txt = "도출·반영완료" if _qa_reflect else "도출"
                 st.success(f"✅ '{_qa_kw}' {_status_txt} 등록!")
@@ -1210,12 +1227,15 @@ with tab2:
                                       max_selections=5,placeholder="키워드를 선택하세요",
                                       key="t3_ms_kw")
             st.session_state["t3_sel_kws"]=sel_kws
+            for _sk in sel_kws:
+                analytics.event_keyword_search(_sk, "trend_compare")
         with ca_pr:
             PERIODS={"7일":7,"30일":30,"90일":90}
             pl=st.radio("기간",list(PERIODS.keys()),horizontal=True,
                         index=list(PERIODS.values()).index(st.session_state["period_days"]),
                         key="t3_period_r")
             st.session_state["period_days"]=PERIODS[pl]
+            analytics.event_filter_change("trend_period", pl)
 
         period_days = st.session_state["period_days"]
         cutoff      = pd.Timestamp.today().normalize()-pd.Timedelta(days=period_days)
@@ -1228,6 +1248,7 @@ with tab2:
         else:
             df_period = df_tr[(df_tr["keyword"].isin(sel_kws))&(df_tr["date"]>=cutoff)]
             src_choice= st.radio("소스",["네이버 데이터랩","구글 트렌드"],horizontal=True,key="t3_src_r")
+            analytics.event_filter_change("trend_source", src_choice)
             src_key   = "naver" if "네이버" in src_choice else "google"
 
             vis_kws = [k for k in sel_kws if k not in hidden_kws]
@@ -2384,6 +2405,7 @@ with tab3:
                         )
                         if _saved > 0:
                             _inv_content(); _inv_derived()
+                            analytics.event_pr_action("bulk_reflect", _bct)
                             st.success(f"✅ {_saved}개 키워드 반영 등록 완료!")
                             st.rerun()
                         else:
@@ -2401,10 +2423,11 @@ with tab3:
             if st.button(f,key=f"t5_f_{i}",type="primary" if active else "secondary",use_container_width=True):
                 st.session_state["t5_flt"]=f; st.rerun()
     with filt_cols[6]:
-        st.download_button("⬇ 엑셀 다운로드",data=build_excel(),
+        if st.download_button("⬇ 엑셀 다운로드",data=build_excel(),
                            file_name=f"keyword_kpi_{T5_MONTH}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           use_container_width=True,key="t5_dl")
+                           use_container_width=True,key="t5_dl"):
+            analytics.event_export_download("excel_kpi", "PR 활용 관리")
 
     flt=st.session_state["t5_flt"]
 
@@ -2487,10 +2510,11 @@ with tab3:
         with pd.ExcelWriter(buf5,engine="openpyxl") as w: dfm5.to_excel(w,index=False,sheet_name="월별KPI")
         cc_dl,_=st.columns([2,5])
         with cc_dl:
-            st.download_button("⬇ 월별 KPI 엑셀",buf5.getvalue(),
+            if st.download_button("⬇ 월별 KPI 엑셀",buf5.getvalue(),
                                file_name=f"monthly_kpi_{CURRENT_MONTH}.xlsx",
                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               key="t5_dl_m")
+                               key="t5_dl_m"):
+                analytics.event_export_download("excel_monthly_kpi", "PR 활용 관리")
         _render_monthly_table(dfm5)
         st.markdown("<div style='margin-top:1rem'></div>",unsafe_allow_html=True)
         _render_manual_form(dfm5,pfx="t5_")
