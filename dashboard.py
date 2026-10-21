@@ -16,6 +16,7 @@ import news_fetcher as nf
 from collector import collect_single_keyword
 import monitoring as mon
 import analytics
+import linkedin_tab
 import monitoring_review_store as mrs
 from monitoring_tab_helpers import (
     today_kst, monitoring_config_version,
@@ -910,11 +911,12 @@ st.markdown(f"""
   <div class="kd-hero-sub">주요 뉴스와 키워드 흐름을 모니터링하고, PR 활용 가능한 이슈와 소재를 발굴합니다.</div>
 </div>""", unsafe_allow_html=True)
 
-tab1,tab2,tab3,tab4 = st.tabs([
+tab1,tab2,tab3,tab4,tab5 = st.tabs([
     "📊 모니터링 현황",
     "📈 추이 분석·발굴",
     "🗂️ PR 활용 관리",
     "📰 관련 뉴스 수집",
+    "📣 LinkedIn 성과 분석",
 ])
 
 # ── GA4: 첫 진입 이벤트 + 탭 전환 감지 ──────────────────────
@@ -2519,6 +2521,13 @@ with tab3:
         _render_monthly_table(dfm5)
         st.markdown("<div style='margin-top:1rem'></div>",unsafe_allow_html=True)
         _render_manual_form(dfm5,pfx="t5_")
+
+
+# ════════════════════════════════════════════════════════
+# TAB 5 · LinkedIn 성과 분석
+# ════════════════════════════════════════════════════════
+with tab5:
+    linkedin_tab.render(prefix="li_")
 
 
 # ── 푸터 ─────────────────────────────────────────────────
