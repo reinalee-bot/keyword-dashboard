@@ -463,8 +463,8 @@ def _render_insights(df: pd.DataFrame) -> None:
 
         title_short = str(top_clk.get("title", "") or "")[:25].rstrip("…")
         s1 = (
-            f"**"{title_short}…"** 게시물은 중앙값보다 **{imp_ratio:.1f}배** 많은 "
-            f"**{int(top_imp):,}회** 노출을 확보해 **{top_clicks:,}회** 클릭으로 이어졌습니다. "
+            f'**“{title_short}…”** 게시물은 중앙값보다 **{imp_ratio:.1f}배** 많은 '
+            f”**{int(top_imp):,}회** 노출을 확보해 **{top_clicks:,}회** 클릭으로 이어졌습니다. “
             f"클릭 증가의 주된 관찰 요인은 **{factor}**입니다."
         )
         sentences.append(s1)
@@ -495,7 +495,7 @@ def _render_insights(df: pd.DataFrame) -> None:
         title_short2 = str(top_eng.get("title", "") or "")[:25].rstrip("…")
 
         s2 = (
-            f"**"{title_short2}…"** 게시물은 {imp_context} "
+            f'**“{title_short2}…”** 게시물은 {imp_context} '
             f"{ctr_str}참여율 **{top_eng_v:.1f}%**로 관찰 기간 최고를 기록했습니다. "
             f"{content_char}의 콘텐츠가 관심을 이끌었을 가능성이 있으나, "
             f"현재 표본만으로 확정할 수는 없습니다."

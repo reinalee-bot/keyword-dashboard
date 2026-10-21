@@ -18,6 +18,7 @@ from collector import collect_single_keyword
 import monitoring as mon
 import analytics
 import linkedin_tab
+import instagram_tab
 import monitoring_review_store as mrs
 from monitoring_tab_helpers import (
     today_kst, monitoring_config_version,
@@ -912,12 +913,13 @@ st.markdown(f"""
   <div class="kd-hero-sub">주요 뉴스와 키워드 흐름을 모니터링하고, PR 활용 가능한 이슈와 소재를 발굴합니다.</div>
 </div>""", unsafe_allow_html=True)
 
-tab1,tab2,tab3,tab4,tab5 = st.tabs([
+tab1,tab2,tab3,tab4,tab5,tab6 = st.tabs([
     "📊 모니터링 현황",
     "📈 추이 분석·발굴",
     "🗂️ PR 활용 관리",
     "📰 관련 뉴스 수집",
     "📣 LinkedIn 키워드·콘텐츠 성과",
+    "📸 Instagram 콘텐츠 성과",
 ])
 
 # 탭 상태 복원: rerun 후에도 사용자가 마지막으로 선택한 탭 유지
@@ -2553,6 +2555,13 @@ with tab3:
 # ════════════════════════════════════════════════════════
 with tab5:
     linkedin_tab.render(prefix="li_")
+
+
+# ════════════════════════════════════════════════════════
+# TAB 6 · Instagram 콘텐츠 성과
+# ════════════════════════════════════════════════════════
+with tab6:
+    instagram_tab.render(prefix="ig_")
 
 
 # ── 푸터 ─────────────────────────────────────────────────
