@@ -464,7 +464,7 @@ def _render_insights(df: pd.DataFrame) -> None:
         title_short = str(top_clk.get("title", "") or "")[:25].rstrip("…")
         s1 = (
             f'**“{title_short}…”** 게시물은 중앙값보다 **{imp_ratio:.1f}배** 많은 '
-            f”**{int(top_imp):,}회** 노출을 확보해 **{top_clicks:,}회** 클릭으로 이어졌습니다. “
+            f'**{int(top_imp):,}회** 노출을 확보해 **{top_clicks:,}회** 클릭으로 이어졌습니다. '
             f"클릭 증가의 주된 관찰 요인은 **{factor}**입니다."
         )
         sentences.append(s1)
