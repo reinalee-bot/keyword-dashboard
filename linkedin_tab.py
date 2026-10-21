@@ -54,9 +54,12 @@ _COLS = [
     "reactions",        # 반응 수
     "comments",         # 댓글 수
     "reposts",          # 리포스트 수
-    "link_clicks",      # 링크 클릭 수 (선택)
-    "ga4_sessions",     # GA4 대시보드 유입 세션 (선택)
-    "utm_content",      # UTM content 값 (선택)
+    "link_clicks",          # 링크 클릭 수 (선택)
+    "ga4_sessions",         # GA4 유입 세션 수 (선택)
+    "ga4_active_users",     # GA4 활성 사용자 수 (선택)
+    "ga4_engaged_sessions", # GA4 참여 세션 수 (선택)
+    "ga4_avg_engage_sec",   # GA4 평균 참여 시간(초, 선택)
+    "utm_content",          # UTM content 값 (선택)
     "promotion",        # Organic / Paid·Boosted
     "measured_at",      # 수치 확인일 (YYYY-MM-DD)
     "note",             # 비고
@@ -88,7 +91,8 @@ def _cast(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
     num_cols = ["impressions", "reactions", "comments", "reposts",
-                "link_clicks", "ga4_sessions"]
+                "link_clicks", "ga4_sessions", "ga4_active_users",
+                "ga4_engaged_sessions", "ga4_avg_engage_sec"]
     for c in num_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df[_COLS].copy()
@@ -137,14 +141,18 @@ def _calc(df: pd.DataFrame) -> pd.DataFrame:
     rea = pd.to_numeric(df["reactions"],   errors="coerce")
     com = pd.to_numeric(df["comments"],    errors="coerce")
     rep = pd.to_numeric(df["reposts"],     errors="coerce")
-    lnk = pd.to_numeric(df["link_clicks"], errors="coerce")
-    ga4 = pd.to_numeric(df["ga4_sessions"], errors="coerce")
+    lnk  = pd.to_numeric(df["link_clicks"],          errors="coerce")
+    ga4  = pd.to_numeric(df["ga4_sessions"],          errors="coerce")
+    au   = pd.to_numeric(df["ga4_active_users"],      errors="coerce")
+    eng  = pd.to_numeric(df["ga4_engaged_sessions"],  errors="coerce")
 
-    df["_engage_total"] = rea.fillna(0) + com.fillna(0) + rep.fillna(0)
-    df["_engage_rate"]  = (df["_engage_total"] / imp * 100).where(imp > 0)
-    df["_ctr"]          = (lnk / imp * 100).where(imp > 0)
-    df["_ga4_rate"]     = (ga4 / lnk * 100).where(lnk > 0)
-    df["_hashtag_cnt"]  = df["hashtags"].apply(
+    df["_engage_total"]        = rea.fillna(0) + com.fillna(0) + rep.fillna(0)
+    df["_engage_rate"]         = (df["_engage_total"] / imp * 100).where(imp > 0)
+    df["_ctr"]                 = (lnk / imp * 100).where(imp > 0)
+    df["_ga4_rate"]            = (ga4 / lnk * 100).where(lnk > 0)   # 링크 클릭 → 유입 전환율
+    df["_dashboard_engage"]    = (eng / ga4 * 100).where(ga4 > 0)   # 대시보드 참여율
+    df["_active_per_click"]    = (au  / lnk * 100).where(lnk > 0)   # 클릭당 활성 사용자율
+    df["_hashtag_cnt"]         = df["hashtags"].apply(
         lambda x: len([h for h in str(x).split(",") if h.strip()]) if pd.notna(x) and str(x).strip() else 0
     )
     return df
@@ -347,8 +355,15 @@ def _render_form(df: pd.DataFrame, edit_row, prefix: str, ss_key: str, edit_key:
                                      value=int(_get("reposts", 0) or 0), key=f"{prefix}f_rep")
             f_lnk  = st.number_input("링크 클릭 수 (Link clicks, 없으면 0)", min_value=0,
                                      value=int(_get("link_clicks", 0) or 0), key=f"{prefix}f_lnk")
-            f_ga4  = st.number_input("대시보드 GA4 유입 세션 (없으면 0)", min_value=0,
+            st.markdown("**GA4 대시보드 유입 지표** (UTM 보고서에서 확인)")
+            f_ga4  = st.number_input("GA4 유입 세션 수 (없으면 0)", min_value=0,
                                      value=int(_get("ga4_sessions", 0) or 0), key=f"{prefix}f_ga4")
+            f_au   = st.number_input("GA4 활성 사용자 수 (없으면 0)", min_value=0,
+                                     value=int(_get("ga4_active_users", 0) or 0), key=f"{prefix}f_au")
+            f_eng  = st.number_input("GA4 참여 세션 수 (없으면 0)", min_value=0,
+                                     value=int(_get("ga4_engaged_sessions", 0) or 0), key=f"{prefix}f_eng")
+            f_sec  = st.number_input("GA4 평균 참여 시간 (초, 선택)", min_value=0,
+                                     value=int(_get("ga4_avg_engage_sec", 0) or 0), key=f"{prefix}f_sec")
 
         col3, col4 = st.columns(2)
         with col3:
@@ -420,8 +435,11 @@ def _render_form(df: pd.DataFrame, edit_row, prefix: str, ss_key: str, edit_key:
                     "reactions"   : f_rea,
                     "comments"    : f_com,
                     "reposts"     : f_rep,
-                    "link_clicks" : f_lnk if f_lnk > 0 else np.nan,
-                    "ga4_sessions": f_ga4 if f_ga4 > 0 else np.nan,
+                    "link_clicks"          : f_lnk if f_lnk > 0 else np.nan,
+                    "ga4_sessions"         : f_ga4 if f_ga4 > 0 else np.nan,
+                    "ga4_active_users"     : f_au  if f_au  > 0 else np.nan,
+                    "ga4_engaged_sessions" : f_eng if f_eng > 0 else np.nan,
+                    "ga4_avg_engage_sec"   : f_sec if f_sec > 0 else np.nan,
                     "utm_content" : f_utm.strip(),
                     "promotion"   : f_promo,
                     "measured_at" : str(f_measured),
@@ -648,10 +666,30 @@ def _render_kpi(df_c: pd.DataFrame, prefix: str):
 
 # ── 해시태그 분석 ─────────────────────────────────────────────
 
-def _render_hashtags(df_c: pd.DataFrame, prefix: str):
-    st.markdown("#### 해시태그별 관찰 성과")
-    st.caption("이 표는 해시태그 사용과 성과의 상관관계를 보여주며, 해시태그가 성과를 유발했다고 단정할 수 없습니다.")
+def _explode_tags(df: pd.DataFrame) -> pd.DataFrame:
+    """해시태그 컬럼을 행으로 분해한 DataFrame 반환."""
+    rows = []
+    for _, r in df.iterrows():
+        tags = [t.strip() for t in str(r.get("hashtags", "")).split(",") if t.strip()]
+        for tag in tags:
+            rows.append({
+                "hashtag"             : tag,
+                "impressions"         : r["impressions"],
+                "_engage_rate"        : r["_engage_rate"],
+                "_ctr"                : r["_ctr"],
+                "link_clicks"         : pd.to_numeric(r.get("link_clicks"), errors="coerce"),
+                "ga4_sessions"        : pd.to_numeric(r.get("ga4_sessions"), errors="coerce"),
+                "ga4_active_users"    : pd.to_numeric(r.get("ga4_active_users"), errors="coerce"),
+                "ga4_engaged_sessions": pd.to_numeric(r.get("ga4_engaged_sessions"), errors="coerce"),
+                "_ga4_rate"           : r.get("_ga4_rate"),
+                "_dashboard_engage"   : r.get("_dashboard_engage"),
+                "published_at"        : r["published_at"],
+                "post_id"             : r["post_id"],
+            })
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
 
+
+def _render_hashtags(df_c: pd.DataFrame, prefix: str):
     inc_paid_ht = st.checkbox("Paid·Boosted 포함", value=False, key=f"{prefix}ht_paid")
     df_ht = df_c if inc_paid_ht else df_c[df_c["promotion"] == "Organic"]
 
@@ -659,29 +697,16 @@ def _render_hashtags(df_c: pd.DataFrame, prefix: str):
         st.info("분석할 데이터가 없습니다.")
         return
 
-    # 해시태그 → 행 분해
-    rows = []
-    for _, r in df_ht.iterrows():
-        tags = [t.strip() for t in str(r["hashtags"]).split(",") if t.strip()]
-        for tag in tags:
-            rows.append({
-                "hashtag"     : tag,
-                "impressions" : r["impressions"],
-                "_engage_rate": r["_engage_rate"],
-                "_ctr"        : r["_ctr"],
-                "link_clicks" : r["link_clicks"],
-                "ga4_sessions": r["ga4_sessions"],
-                "published_at": r["published_at"],
-                "post_id"     : r["post_id"],
-            })
-
-    if not rows:
+    df_tags = _explode_tags(df_ht)
+    if df_tags.empty:
         st.info("해시태그 데이터가 없습니다.")
         return
 
-    df_tags = pd.DataFrame(rows)
+    # ── A. 해시태그별 관찰 성과 ──────────────────────────────
+    st.markdown("#### 해시태그별 관찰 성과")
+    st.caption("이 표는 해시태그 사용과 성과의 상관관계를 보여주며, 해시태그가 성과를 유발했다고 단정할 수 없습니다.")
 
-    agg = df_tags.groupby("hashtag").agg(
+    agg_perf = df_tags.groupby("hashtag").agg(
         사용_게시물_수 = ("post_id",       "count"),
         총_노출수      = ("impressions",    "sum"),
         평균_참여율    = ("_engage_rate",   "mean"),
@@ -691,32 +716,79 @@ def _render_hashtags(df_c: pd.DataFrame, prefix: str):
         총_GA4유입    = ("ga4_sessions",   "sum"),
         최고_참여율   = ("_engage_rate",   "max"),
         최근_사용일   = ("published_at",    "max"),
-    ).reset_index()
+    ).reset_index().sort_values("평균_참여율", ascending=False)
 
-    # 정렬: 평균 참여율
-    agg = agg.sort_values("평균_참여율", ascending=False)
+    agg_perf["비고"]       = agg_perf["사용_게시물_수"].apply(lambda n: "⚠️ 표본 부족" if n < 3 else "")
+    agg_perf["평균_참여율"]  = agg_perf["평균_참여율"].apply(lambda x: _fmt(x, pct=True))
+    agg_perf["중앙값_참여율"] = agg_perf["중앙값_참여율"].apply(lambda x: _fmt(x, pct=True))
+    agg_perf["평균_CTR"]     = agg_perf["평균_CTR"].apply(lambda x: _fmt(x, pct=True))
+    agg_perf["총_노출수"]    = agg_perf["총_노출수"].apply(_fmt)
+    agg_perf["총_링크클릭"]  = agg_perf["총_링크클릭"].apply(_fmt)
+    agg_perf["총_GA4유입"]   = agg_perf["총_GA4유입"].apply(_fmt)
+    agg_perf["최고_참여율"]  = agg_perf["최고_참여율"].apply(lambda x: _fmt(x, pct=True))
 
-    # 표본 부족 배지
-    def _badge(n):
-        return "⚠️ 표본 부족" if n < 3 else ""
-
-    agg["비고"] = agg["사용_게시물_수"].apply(_badge)
-
-    # 포맷
-    agg["평균_참여율"]  = agg["평균_참여율"].apply(lambda x: _fmt(x, pct=True))
-    agg["중앙값_참여율"] = agg["중앙값_참여율"].apply(lambda x: _fmt(x, pct=True))
-    agg["평균_CTR"]     = agg["평균_CTR"].apply(lambda x: _fmt(x, pct=True))
-    agg["총_노출수"]    = agg["총_노출수"].apply(lambda x: _fmt(x))
-    agg["총_링크클릭"]  = agg["총_링크클릭"].apply(_fmt)
-    agg["총_GA4유입"]   = agg["총_GA4유입"].apply(_fmt)
-    agg["최고_참여율"]  = agg["최고_참여율"].apply(lambda x: _fmt(x, pct=True))
-
-    st.dataframe(agg.rename(columns={"hashtag": "해시태그"}),
+    st.dataframe(agg_perf.rename(columns={"hashtag": "해시태그"}),
                  use_container_width=True, hide_index=True)
-
     st.caption(
         "**표본 부족(3건 미만):** 소수의 게시물로 측정된 평균은 우연한 변동에 민감합니다. "
         "동일 해시태그를 최소 3건 이상 사용한 후 해석하세요."
+    )
+
+    # ── B. 해시태그별 유입 기여 관찰 ─────────────────────────
+    st.divider()
+    st.markdown("#### 해시태그별 유입 기여 관찰")
+    st.caption(
+        "LinkedIn은 사용자가 특정 해시태그를 통해 게시물을 발견했는지 직접 제공하지 않습니다. "
+        "**본 표는 해당 해시태그를 포함한 게시물군의 관찰된 대시보드 유입 성과이며, "
+        "개별 해시태그의 순수 인과 효과를 의미하지 않습니다.**"
+    )
+    st.info(
+        "한 게시물에는 여러 해시태그와 콘텐츠 요소가 함께 적용됩니다. "
+        "본 표는 특정 해시태그를 포함한 게시물군의 관찰된 대시보드 유입 성과이며, "
+        "개별 해시태그의 순수 인과 효과를 의미하지 않습니다.",
+        icon="ℹ️",
+    )
+
+    # 게시물당 GA4 유입 세션 집계 (평균·중앙값은 per-post로 계산)
+    agg_inflow = df_tags.groupby("hashtag").agg(
+        사용_게시물_수         = ("post_id",             "count"),
+        총_링크_클릭           = ("link_clicks",          "sum"),
+        총_GA4_유입_세션       = ("ga4_sessions",         "sum"),
+        총_GA4_활성_사용자     = ("ga4_active_users",     "sum"),
+        총_GA4_참여_세션       = ("ga4_engaged_sessions", "sum"),
+        평균_GA4_유입_세션     = ("ga4_sessions",         "mean"),
+        중앙값_GA4_유입_세션   = ("ga4_sessions",         "median"),
+        최근_사용일            = ("published_at",          "max"),
+    ).reset_index()
+
+    # 링크 클릭 → 대시보드 유입 전환율 (총계 기반)
+    agg_inflow["링크→유입_전환율"] = (
+        agg_inflow["총_GA4_유입_세션"] / agg_inflow["총_링크_클릭"] * 100
+    ).where(agg_inflow["총_링크_클릭"] > 0)
+
+    # 대시보드 참여율 (총계 기반)
+    agg_inflow["대시보드_참여율"] = (
+        agg_inflow["총_GA4_참여_세션"] / agg_inflow["총_GA4_유입_세션"] * 100
+    ).where(agg_inflow["총_GA4_유입_세션"] > 0)
+
+    agg_inflow = agg_inflow.sort_values("총_GA4_유입_세션", ascending=False)
+    agg_inflow["비고"] = agg_inflow["사용_게시물_수"].apply(lambda n: "⚠️ 표본 부족" if n < 3 else "")
+
+    # 포맷
+    for col in ["총_링크_클릭", "총_GA4_유입_세션", "총_GA4_활성_사용자", "총_GA4_참여_세션"]:
+        agg_inflow[col] = agg_inflow[col].apply(_fmt)
+    agg_inflow["평균_GA4_유입_세션"]   = agg_inflow["평균_GA4_유입_세션"].apply(_fmt)
+    agg_inflow["중앙값_GA4_유입_세션"] = agg_inflow["중앙값_GA4_유입_세션"].apply(_fmt)
+    agg_inflow["링크→유입_전환율"]     = agg_inflow["링크→유입_전환율"].apply(lambda x: _fmt(x, pct=True))
+    agg_inflow["대시보드_참여율"]       = agg_inflow["대시보드_참여율"].apply(lambda x: _fmt(x, pct=True))
+
+    st.dataframe(
+        agg_inflow.rename(columns={"hashtag": "해시태그"}),
+        use_container_width=True, hide_index=True,
+    )
+    st.caption(
+        "**링크→유입 전환율:** LinkedIn 링크 클릭 중 실제로 대시보드에 유입된 비율. "
+        "**대시보드 참여율:** GA4 유입 세션 중 참여 세션(30초 이상 체류·2페이지 이상 등) 비율."
     )
 
 
