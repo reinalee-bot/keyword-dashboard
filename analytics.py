@@ -2,29 +2,33 @@
 analytics.py — GA4 통합 모듈
 
 구조:
-- 브라우저 측: 0-height 컴포넌트로 gtag.js를 부모 윈도우에 주입
+- 브라우저 측: components.html() 안의 iframe에서 gtag.js를 직접 초기화
+  → window.parent 의존 없이 DebugView 등록 보장
   → page_view, UTM 세션 어트리뷰션, 탭 전환 자동 추적
-- 서버 측: Measurement Protocol로 커스텀 이벤트 전송 (버튼·필터 등)
+- 서버 측: Measurement Protocol (/mp/collect) 로 커스텀 이벤트 전송
 
 GA4 설정 필요 항목 (.streamlit/secrets.toml):
   GA4_MEASUREMENT_ID = "G-XXXXXXXXXX"
   GA4_API_SECRET     = "xxxxxxxxxxxx"  (Measurement Protocol API secret)
 
-디버그 모드:
-  ?ga_debug_mode=1 쿼리 파라미터 → Python이 감지 → JS에 직접 주입
-  (iframe 내부에서 window.location을 읽지 않음)
+debug 모드:
+  ?ga_debug_mode=1 → Python st.query_params가 판별 → JS 리터럴로 삽입
+  iframe 내부에서 window.location을 읽지 않음
 """
 
 import os
 import uuid
 import threading
+from urllib.parse import urlencode
 
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-_MP_ENDPOINT      = "https://www.google-analytics.com/mp/collect"
-_MP_DEBUG_ENDPOINT = "https://www.google-analytics.com/debug/mp/collect"
+_MP_ENDPOINT = "https://www.google-analytics.com/mp/collect"
+
+# 배포 URL — page_location 파라미터에 사용 (secrets로 override 가능)
+_DEFAULT_APP_URL = "https://keyword-dashboard-4dqkm8snau6crfozatwbcg.streamlit.app/"
 
 
 # ── 설정 읽기 ─────────────────────────────────────────────
@@ -64,94 +68,139 @@ def _is_debug() -> bool:
         return False
 
 
-# ── 브라우저 측: gtag.js 주입 ─────────────────────────────
+def _page_url() -> str:
+    """현재 페이지 URL을 쿼리 파라미터 포함하여 재구성합니다."""
+    try:
+        base = (
+            st.secrets.get("GA4_APP_URL", None)
+            or os.getenv("GA4_APP_URL", "")
+            or _DEFAULT_APP_URL
+        )
+    except Exception:
+        base = _DEFAULT_APP_URL
+    base = base.rstrip("/") + "/"
+    try:
+        qp = {k: v for k, v in st.query_params.items()
+              if k != "ga_debug_mode"}          # debug param은 URL에 노출 안 함
+        return (base + "?" + urlencode(qp)) if qp else base
+    except Exception:
+        return base
+
+
+# ── 브라우저 측: gtag.js를 iframe 내부에서 직접 초기화 ──────
 def inject_ga4_tag() -> None:
     """
-    gtag.js를 Streamlit 부모 윈도우에 1회 주입합니다.
-    Measurement ID가 없으면 아무것도 하지 않습니다.
-    debug 모드 여부는 Python이 st.query_params로 판별해 JS에 직접 삽입합니다.
+    GA4 gtag.js를 components.html() iframe 내부에서 직접 초기화합니다.
+    window.parent 의존 없이 안정적으로 동작합니다.
+
+    debug 모드(ga_debug_mode=1):
+    - Python이 st.query_params로 감지
+    - JS 리터럴(true/false)을 HTML에 직접 삽입
+    - gtag('set','debug_mode',true) 후 config → GA4 DebugView에 기기 등록
+
+    session_state로 중복 주입을 방지하되,
+    debug 모드가 바뀌면 재주입합니다.
     """
     if not _enabled():
-        return
-    if st.session_state.get("_ga4_injected"):
         return
 
     mid, _ = _cfg()
     debug = _is_debug()
-    # Python bool → JS literal
     js_debug = "true" if debug else "false"
 
-    components.html(f"""
+    # 같은 debug 모드로 이미 주입했으면 건너뜀
+    if (st.session_state.get("_ga4_injected")
+            and st.session_state.get("_ga4_debug_mode") == debug):
+        return
+
+    page_url = _page_url()
+
+    components.html(f"""<!DOCTYPE html>
+<html>
+<head>
+<script async src="https://www.googletagmanager.com/gtag/js?id={mid}"></script>
 <script>
 (function() {{
-  var w = window.parent;
-  if (w._ga4_injected) return;
-  w._ga4_injected = true;
-
   var MID   = '{mid}';
   var DEBUG = {js_debug};
+  var PAGE  = '{page_url}';
 
-  // dataLayer + gtag 초기화 (스크립트 로드 전에 미리 설정)
-  w.dataLayer = w.dataLayer || [];
-  w.gtag = function() {{ w.dataLayer.push(arguments); }};
+  window.dataLayer = window.dataLayer || [];
+  function gtag() {{ dataLayer.push(arguments); }}
+  window.gtag = gtag;
 
-  if (DEBUG) {{
-    // DebugView 활성화: 'set' 호출을 config 이전에
-    w.gtag('set', 'debug_mode', true);
-  }}
-
-  w.gtag('js', new Date());
-  w.gtag('config', MID, {{
-    'anonymize_ip': true,
-    'allow_enhanced_measurement': true,
-    'send_page_view': true,
-    'debug_mode': DEBUG
+  // debug 모드: 'set' 먼저, 그 다음 'js', 마지막 'config'
+  if (DEBUG) gtag('set', 'debug_mode', true);
+  gtag('js', new Date());
+  gtag('config', MID, {{
+    'debug_mode'               : DEBUG,
+    'send_page_view'           : true,
+    'page_location'            : PAGE,
+    'anonymize_ip'             : true,
+    'allow_enhanced_measurement': true
   }});
 
-  // gtag.js 스크립트 삽입
-  var s = w.document.createElement('script');
-  s.async = true;
-  s.src = 'https://www.googletagmanager.com/gtag/js?id=' + MID;
-  w.document.head.insertBefore(s, w.document.head.firstChild);
-
-  // debug 모드 플래그를 부모 창에 노출 (track_active_tab 등에서 참조)
-  w._ga4_debug = DEBUG;
+  // 부모 창에도 gtag / 디버그 플래그 노출 (tab_view 등에 사용)
+  // window.parent 접근이 불가한 환경에선 조용히 실패
+  try {{
+    window.parent.gtag        = gtag;
+    window.parent.dataLayer   = window.dataLayer;
+    window.parent._ga4_debug  = DEBUG;
+  }} catch(e) {{}}
 }})();
 </script>
+</head>
+<body></body>
+</html>
 """, height=0, scrolling=False)
 
-    st.session_state["_ga4_injected"] = True
+    st.session_state["_ga4_injected"]   = True
+    st.session_state["_ga4_debug_mode"] = debug
 
 
-# ── 브라우저 측: 탭 전환 감지 ────────────────────────────
+# ── 브라우저 측: 탭 전환 감지 ─────────────────────────────
 def track_active_tab() -> None:
     """
     DOM에서 활성 탭 이름을 읽어 탭이 바뀔 때만 gtag 이벤트를 전송합니다.
-    debug_mode 파라미터는 부모 창의 w._ga4_debug 플래그로 전달합니다.
+    부모 창의 gtag 함수를 사용하며, 없으면 아무것도 하지 않습니다.
     """
     if not _enabled():
         return
 
-    components.html("""
-<script>
+    components.html("""<script>
 (function() {
-  var w = window.parent;
-  if (typeof w.gtag !== 'function') {
-    setTimeout(arguments.callee, 500);
-    return;
+  // inject_ga4_tag() 가 parent.gtag를 노출했을 때만 동작
+  function tryTrack() {
+    var gtagFn;
+    try { gtagFn = window.parent.gtag; } catch(e) { return; }
+    if (typeof gtagFn !== 'function') return;
+
+    function check() {
+      var doc;
+      try { doc = window.parent.document; } catch(e) { return; }
+
+      var el = doc.querySelector('[role="tab"][aria-selected="true"]');
+      if (!el) return;
+
+      // 이모지·공백 제거 후 순수 탭 이름 추출
+      var name = el.innerText.trim().replace(/^[\\s\\S]{1,3}\\s/, '').trim();
+      var last;
+      try { last = window.parent._ga4_last_tab; } catch(e) { return; }
+      if (!name || name === last) return;
+      try { window.parent._ga4_last_tab = name; } catch(e) {}
+
+      var params = { tab_name: name };
+      try { if (window.parent._ga4_debug) params.debug_mode = true; } catch(e) {}
+      gtagFn('event', 'tab_view', params);
+    }
+
+    setTimeout(check, 80);
+    setTimeout(check, 450);
   }
-  function check() {
-    var el = w.document.querySelector('[role="tab"][aria-selected="true"]');
-    if (!el) return;
-    var name = el.innerText.trim().replace(/^[\\s\\S]{1,3}\\s/, '').trim();
-    if (!name || name === w._ga4_last_tab) return;
-    w._ga4_last_tab = name;
-    var params = { tab_name: name };
-    if (w._ga4_debug) params.debug_mode = true;
-    w.gtag('event', 'tab_view', params);
-  }
-  setTimeout(check, 80);
-  setTimeout(check, 400);
+
+  // gtag가 아직 설정 안 됐을 수 있으므로 약간 지연 후 시도
+  setTimeout(tryTrack, 200);
+  setTimeout(tryTrack, 700);
 })();
 </script>
 """, height=0, scrolling=False)
@@ -160,24 +209,26 @@ def track_active_tab() -> None:
 # ── 서버 측: Measurement Protocol 전송 (비동기) ──────────
 def _mp(event_name: str, params: dict) -> None:
     """
-    GA4 Measurement Protocol로 이벤트를 비동기 전송합니다.
-    debug 모드일 때는 /debug/mp/collect 엔드포인트로 보냅니다.
+    GA4 Measurement Protocol(/mp/collect)로 이벤트를 비동기 전송합니다.
+    debug 모드일 때 params에 debug_mode:true 를 추가해 DebugView에 이벤트를 표시합니다.
+    (/debug/mp/collect 는 검증 전용으로 GA4에 이벤트를 저장하지 않으므로 사용하지 않음)
+
     API Secret이 없거나 전송에 실패해도 앱 동작에 영향을 주지 않습니다.
     """
     mid, sec = _cfg()
     if not mid or not sec:
         return
 
-    debug = _is_debug()
-    if debug:
-        params = dict(params, debug_mode=True)
+    # engagement_time_msec: GA4가 활성 세션으로 인식하는 데 필요
+    final_params = {"engagement_time_msec": 1, **params}
+    if _is_debug():
+        final_params["debug_mode"] = True
 
-    endpoint = _MP_DEBUG_ENDPOINT if debug else _MP_ENDPOINT
     payload = {
         "client_id": _client_id(),
-        "events": [{"name": event_name, "params": params}],
+        "events": [{"name": event_name, "params": final_params}],
     }
-    url = f"{endpoint}?measurement_id={mid}&api_secret={sec}"
+    url = f"{_MP_ENDPOINT}?measurement_id={mid}&api_secret={sec}"
 
     def _post():
         try:
@@ -197,10 +248,10 @@ def event_dashboard_view(utm_source: str = "", utm_campaign: str = "",
         return
     st.session_state["_ga4_dv_sent"] = True
     _mp("dashboard_view", {
-        "page_name": "keyword_dashboard",
-        "utm_source": utm_source[:50],
-        "utm_campaign": utm_campaign[:50],
-        "utm_content": utm_content[:100],
+        "page_name"    : "keyword_dashboard",
+        "utm_source"   : utm_source[:50],
+        "utm_campaign" : utm_campaign[:50],
+        "utm_content"  : utm_content[:100],
     })
 
 
@@ -209,8 +260,8 @@ def event_keyword_search(keyword: str, search_type: str = "trend") -> None:
     if not keyword:
         return
     _mp("keyword_search", {
-        "keyword": str(keyword)[:50],
-        "search_type": search_type,
+        "keyword"     : str(keyword)[:50],
+        "search_type" : search_type,
     })
 
 
@@ -228,22 +279,22 @@ def event_filter_change(filter_name: str, filter_value: str) -> None:
 def event_news_open(news_source: str, news_category: str = "") -> None:
     """뉴스 원문 또는 관련 링크 클릭 시 기록."""
     _mp("news_open", {
-        "news_source": str(news_source)[:50],
-        "news_category": str(news_category)[:50],
+        "news_source"    : str(news_source)[:50],
+        "news_category"  : str(news_category)[:50],
     })
 
 
 def event_export_download(export_type: str, tab_name: str) -> None:
     """내보내기 실행 시 기록."""
     _mp("export_download", {
-        "export_type": export_type,
-        "tab_name": tab_name,
+        "export_type" : export_type,
+        "tab_name"    : tab_name,
     })
 
 
 def event_pr_action(action_type: str, content_type: str = "") -> None:
     """PR 활용 관리 탭의 핵심 액션 기록."""
     _mp("pr_action", {
-        "action_type": action_type,
-        "content_type": str(content_type)[:50],
+        "action_type"  : action_type,
+        "content_type" : str(content_type)[:50],
     })
