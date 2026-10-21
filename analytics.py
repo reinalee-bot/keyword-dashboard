@@ -25,7 +25,8 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-_MP_ENDPOINT = "https://www.google-analytics.com/mp/collect"
+_MP_ENDPOINT       = "https://www.google-analytics.com/mp/collect"
+_MP_DEBUG_ENDPOINT = "https://www.google-analytics.com/debug/mp/collect"
 
 # 배포 URL — page_location 파라미터에 사용 (secrets로 override 가능)
 _DEFAULT_APP_URL = "https://keyword-dashboard-4dqkm8snau6crfozatwbcg.streamlit.app/"
@@ -298,3 +299,67 @@ def event_pr_action(action_type: str, content_type: str = "") -> None:
         "action_type"  : action_type,
         "content_type" : str(content_type)[:50],
     })
+
+
+# ── 디버그 패널 (ga_debug_mode=1 에서만 표시) ─────────────
+def show_debug_panel() -> None:
+    """
+    ?ga_debug_mode=1 접속 시 Streamlit 화면 상단에 GA4 MP 검증 결과를 표시합니다.
+    - GA4 credentials 정상 여부
+    - 테스트 이벤트 MP 검증 응답 (오류 메시지 포함)
+    - DebugView가 동작하지 않는 환경에서 대체 진단 수단
+    """
+    if not _is_debug():
+        return
+
+    mid, sec = _cfg()
+
+    with st.expander("🔧 GA4 디버그 패널 (ga_debug_mode=1)", expanded=True):
+        st.caption("이 패널은 ?ga_debug_mode=1 접속 시에만 표시됩니다.")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Measurement ID", mid if mid else "❌ 미설정")
+        with col2:
+            st.metric("API Secret", "✅ 설정됨" if sec else "❌ 미설정")
+
+        if not mid or not sec:
+            st.error("GA4_MEASUREMENT_ID 또는 GA4_API_SECRET 이 설정되지 않았습니다.")
+            return
+
+        st.divider()
+        if st.button("📡 MP 검증 이벤트 전송 (debug endpoint)"):
+            payload = {
+                "client_id": _client_id(),
+                "events": [{
+                    "name": "ga4_debug_test",
+                    "params": {
+                        "debug_mode"         : True,
+                        "engagement_time_msec": 1,
+                        "test_note"          : "analytics.py debug panel",
+                    }
+                }]
+            }
+            url = f"{_MP_DEBUG_ENDPOINT}?measurement_id={mid}&api_secret={sec}"
+            try:
+                resp = requests.post(url, json=payload, timeout=5)
+                data = resp.json()
+                if data.get("validationMessages"):
+                    st.warning("⚠️ 검증 오류:")
+                    for msg in data["validationMessages"]:
+                        st.code(f"{msg.get('validationCode')}: {msg.get('description')}")
+                else:
+                    st.success("✅ MP 검증 성공! 이벤트 형식 이상 없음")
+                    st.caption("→ GA4 실시간 보고서에서 'ga4_debug_test' 이벤트 확인 가능")
+                with st.expander("원본 응답"):
+                    st.json(data)
+            except Exception as e:
+                st.error(f"요청 실패: {e}")
+
+        st.divider()
+        st.info(
+            "**DebugView '디버그 기기 0' 이유:**\n"
+            "GA4 DebugView의 '기기' 카운터는 브라우저에서 gtag.js SDK가 직접 실행될 때만 증가합니다. "
+            "Streamlit의 srcdoc iframe에서는 Streamlit Cloud 보안 정책으로 외부 스크립트 로딩이 제한될 수 있습니다.\n\n"
+            "**대안:** GA4 > 보고서 > **실시간** 에서 dashboard_view, keyword_search 등 이벤트를 실시간 확인하세요."
+        )

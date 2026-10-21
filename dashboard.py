@@ -56,6 +56,7 @@ st.set_page_config(page_title="뉴스 & 트렌드 모니터링 | SCK·STK",
 
 # ── GA4 태그 주입 (Measurement ID 없으면 무시) ────────────────
 analytics.inject_ga4_tag()
+analytics.show_debug_panel()  # ga_debug_mode=1 에서만 패널 표시
 
 # ── CSS ──────────────────────────────────────────────────────
 # 핵심 원칙:
