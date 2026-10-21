@@ -1,1 +1,1 @@
-post_id,published_at,title,url,content_type,campaign,hashtags,impressions,reactions,comments,reposts,link_clicks,ga4_sessions,utm_content,promotion,measured_at,note,added_at
+post_id,url,published_at,title,text,post_format,campaign,content_type,hashtags,impressions,views,external_views,clicks,ctr,reactions,comments,reposts,followers,engagement_rate,utm_content,ga4_sessions,added_at,updated_at

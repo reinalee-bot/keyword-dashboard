@@ -1,19 +1,17 @@
 """
 linkedin_tab.py — 📣 LinkedIn 성과 분석 탭
 
-LinkedIn 게시물 분석 수치를 수동 입력하고,
-해시태그별 관찰 성과를 비교하는 모듈입니다.
+기본 흐름:
+  LinkedIn Company Page 관리자 > 분석 > 게시물 > 내보내기(.xls/.xlsx)
+  → 업로드 → 자동 분석 → 인사이트 표시
 
-저장: data/linkedin_posts.csv (GitHub 동기화 패턴 동일)
-주의: LinkedIn 로그인/크롤링/비공식 API 미사용
+LinkedIn 로그인 / 크롤링 / 비공식 API 미사용.
 """
 
 from __future__ import annotations
 
-import io
 import os
-import re
-from datetime import date, datetime
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -22,144 +20,221 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import github_storage as gh
-import linkedin_import as li_import
+import linkedin_import as li
 
-# ── 상수 ─────────────────────────────────────────────────────
-_LINKEDIN_CSV   = "data/linkedin_posts.csv"
-_LINKEDIN_LOCAL = os.path.join(os.path.dirname(__file__), _LINKEDIN_CSV)
-
-_DASHBOARD_URL  = "https://keyword-dashboard-4dqkm8snau6crfozatwbcg.streamlit.app/"
-
-_CONTENT_TYPES  = [
-    "뉴스 공유", "인사이트", "행사", "채용·조직문화", "제품·솔루션", "기타"
-]
-
-_DISCOVERY_PATHS = [
-    "키워드 대시보드 발굴",
-    "기존 상시 해시태그",
-    "직접 리서치",
-    "혼합",
-]
+# ── 상수 ──────────────────────────────────────────────────────────────
+_CSV_PATH  = "data/linkedin_posts.csv"
+_LOCAL_CSV = os.path.join(os.path.dirname(__file__), _CSV_PATH)
 
 _COLS = [
-    "post_id",          # UUID-like: published_at + title 해시
-    "published_at",     # 게시일 (YYYY-MM-DD)
-    "title",            # 게시물 제목/식별명
-    "url",              # LinkedIn 게시물 URL
-    "content_type",     # 콘텐츠 유형
-    "campaign",         # 주요 주제/캠페인명
-    "hashtags",         # 정규화된 해시태그, 쉼표 구분
-    "discovery_path",   # 키워드 발굴 경로
-    "source_keywords",  # 대시보드에서 발굴한 원본 키워드
-    "impressions",      # 노출수
-    "reactions",        # 반응 수
-    "comments",         # 댓글 수
-    "reposts",          # 리포스트 수
-    "link_clicks",          # 링크 클릭 수 (선택)
-    "ga4_sessions",         # GA4 유입 세션 수 (선택)
-    "ga4_active_users",     # GA4 활성 사용자 수 (선택)
-    "ga4_engaged_sessions", # GA4 참여 세션 수 (선택)
-    "ga4_avg_engage_sec",   # GA4 평균 참여 시간(초, 선택)
-    "utm_content",          # UTM content 값 (선택)
-    "promotion",        # Organic / Paid·Boosted
-    "measured_at",      # 수치 확인일 (YYYY-MM-DD)
-    "note",             # 비고
-    "added_at",         # 등록 시각
+    "post_id", "url", "published_at", "title", "text",
+    "post_format", "campaign", "content_type", "hashtags",
+    "impressions", "views", "external_views", "clicks", "ctr",
+    "reactions", "comments", "reposts", "followers", "engagement_rate",
+    "utm_content", "ga4_sessions",
+    "added_at", "updated_at",
+]
+
+_NUM_COLS = [
+    "impressions", "views", "external_views", "clicks", "ctr",
+    "reactions", "comments", "reposts", "followers", "engagement_rate",
+    "ga4_sessions",
 ]
 
 
-# ── 데이터 로드·저장 ──────────────────────────────────────────
+# ── 데이터 로드·저장 ──────────────────────────────────────────────────
 
 def _load() -> pd.DataFrame:
-    """GitHub → 로컬 순서로 CSV를 로드. 없으면 빈 DataFrame."""
-    df = gh.read_csv(_LINKEDIN_CSV)
+    df = gh.read_csv(_CSV_PATH)
     if df is not None and len(df) > 0:
         return _cast(df)
-
-    if os.path.exists(_LINKEDIN_LOCAL):
+    if os.path.exists(_LOCAL_CSV):
         try:
-            df = pd.read_csv(_LINKEDIN_LOCAL, dtype=str)
-            return _cast(df)
+            return _cast(pd.read_csv(_LOCAL_CSV, dtype=str))
         except Exception:
             pass
-
     return pd.DataFrame(columns=_COLS)
 
 
 def _cast(df: pd.DataFrame) -> pd.DataFrame:
-    """타입 보정 및 누락 컬럼 보충."""
     for col in _COLS:
         if col not in df.columns:
             df[col] = ""
-    num_cols = ["impressions", "reactions", "comments", "reposts",
-                "link_clicks", "ga4_sessions", "ga4_active_users",
-                "ga4_engaged_sessions", "ga4_avg_engage_sec"]
-    for c in num_cols:
+    for c in _NUM_COLS:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df[_COLS].copy()
 
 
 def _save(df: pd.DataFrame, msg: str) -> bool:
-    """로컬 + GitHub에 저장."""
-    os.makedirs(os.path.dirname(_LINKEDIN_LOCAL), exist_ok=True)
-    df.to_csv(_LINKEDIN_LOCAL, index=False, encoding="utf-8")
-    return gh.write_csv(df, _LINKEDIN_CSV, msg)
+    os.makedirs(os.path.dirname(_LOCAL_CSV), exist_ok=True)
+    df.to_csv(_LOCAL_CSV, index=False, encoding="utf-8")
+    return gh.write_csv(df, _CSV_PATH, msg)
 
 
-def _make_id(published_at: str, title: str) -> str:
-    import hashlib
-    raw = f"{published_at}|{title}"
-    return hashlib.md5(raw.encode()).hexdigest()[:12]
+# ── 공개 렌더 함수 ────────────────────────────────────────────────────
+
+@st.fragment
+def render(prefix: str = "li_") -> None:
+    """dashboard.py 에서 `with tab5: linkedin_tab.render()` 로 호출합니다."""
+
+    ss_df = f"{prefix}df"
+    if ss_df not in st.session_state:
+        st.session_state[ss_df] = _load()
+
+    df: pd.DataFrame = st.session_state[ss_df]
+
+    # ── 업로드 섹션 (최상단 CTA)
+    _render_upload(df, prefix, ss_df)
+
+    # 업로드 후 데이터 재조회
+    df = st.session_state[ss_df]
+
+    if len(df) == 0:
+        _render_empty_state()
+        _render_advanced(df, prefix, ss_df)
+        return
+
+    # ── 분석 화면
+    df_c = _enrich(df)
+
+    sub1, sub2, sub3 = st.tabs(["📊 성과 요약", "📋 게시물 목록", "#️⃣ 해시태그 관찰"])
+    with sub1:
+        _render_summary(df_c, prefix)
+    with sub2:
+        _render_list(df_c, prefix)
+    with sub3:
+        _render_hashtags(df_c, prefix)
+
+    # ── 고급·보조 기능 (접힌 상태)
+    _render_advanced(df, prefix, ss_df)
 
 
-# ── 해시태그 정규화 ───────────────────────────────────────────
+# ── 업로드 섹션 ───────────────────────────────────────────────────────
 
-def _normalize_hashtags(raw: str) -> str:
-    """
-    쉼표/줄바꿈 구분 → # 추가, 소문자 비교용 정규화, 중복 제거.
-    저장 형태: #aIAgent → #aiagent (소문자)
-    """
-    tags = re.split(r"[,\n\r]+", raw)
-    seen = set()
-    result = []
-    for t in tags:
-        t = t.strip().lstrip("#").strip()
-        if not t:
-            continue
-        normalized = "#" + re.sub(r"\s+", "", t).lower()
-        if normalized not in seen:
-            seen.add(normalized)
-            result.append(normalized)
-    return ", ".join(result)
+def _render_upload(df: pd.DataFrame, prefix: str, ss_df: str) -> None:
+    has_data = len(df) > 0
+
+    with st.expander(
+        "📥 LinkedIn Content Excel 업로드" + (" (데이터 추가·갱신)" if has_data else ""),
+        expanded=not has_data,
+    ):
+        st.markdown("""
+<div style="background:#EFF6FF;border-left:4px solid #3B82F6;
+     padding:10px 14px;border-radius:6px;margin-bottom:.75rem;font-size:13px;color:#374151">
+<b>LinkedIn 관리자 > 분석 > 게시물 > 내보내기</b>로 받은 Excel 파일을 그대로 올리세요.<br>
+게시물·해시태그·성과를 자동으로 가져옵니다. 같은 게시물을 다시 올리면 최신 수치로 갱신됩니다.
+</div>""", unsafe_allow_html=True)
+
+        uploaded = st.file_uploader(
+            "LinkedIn Content 내보내기 파일 (.xls / .xlsx / .csv)",
+            type=["xls", "xlsx", "csv"],
+            key=f"{prefix}upload",
+            label_visibility="collapsed",
+        )
+
+        if not uploaded:
+            st.caption("파일을 올리면 자동으로 분석이 시작됩니다.")
+            return
+
+        with st.spinner("파일 읽는 중..."):
+            df_posts, df_stats, err = li.read_linkedin_file(uploaded)
+
+        if err or df_posts is None:
+            st.error(f"파일을 읽을 수 없습니다.\n\n**오류 상세:** {err}")
+            return
+
+        with st.spinner("게시물 파싱 중..."):
+            new_rows = li.parse_posts(df_posts)
+
+        if not new_rows:
+            st.warning("가져올 게시물이 없습니다. 파일 내용을 확인하세요.")
+            return
+
+        # ── 미리보기
+        n_total = len(new_rows)
+        n_dup   = sum(1 for r in new_rows
+                      if r["url"].rstrip("/") in
+                      {str(u).rstrip("/") for u in df["url"] if pd.notna(u) and str(u).strip()})
+        n_new   = n_total - n_dup
+
+        dates = [r["published_at"] for r in new_rows if r["published_at"]]
+        period = f"{min(dates)} ~ {max(dates)}" if dates else "-"
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("전체 게시물", n_total)
+        m2.metric("신규", n_new)
+        m3.metric("갱신 (기존 URL)", n_dup)
+        m4.metric("기간", period)
+
+        # 미리보기 테이블 (간략)
+        prev = pd.DataFrame([{
+            "게시일"    : r["published_at"],
+            "게시물 요약": r["title"][:45] + "…" if len(r["title"]) > 45 else r["title"],
+            "해시태그"  : r["hashtags"] or "(없음)",
+            "노출수"    : r["impressions"],
+            "클릭"      : r["clicks"],
+            "참여율"    : f"{r['engagement_rate']*100:.1f}%" if r["engagement_rate"] and not np.isnan(r["engagement_rate"]) else "-",
+        } for r in new_rows])
+        st.dataframe(prev, use_container_width=True, height=220)
+
+        st.divider()
+
+        # 통계 시트 안내 (있을 때)
+        if df_stats is not None:
+            st.info("💡 `통계` 시트(일별 채널 성과)도 감지됐습니다. 성과 요약 탭의 '일별 추이' 차트에 활용됩니다.", icon="📈")
+            if f"{prefix}stats_df" not in st.session_state:
+                st.session_state[f"{prefix}stats_df"] = df_stats
+
+        if st.button(
+            f"✅ 가져오기 확정  (신규 {n_new}건 추가 · 갱신 {n_dup}건)",
+            type="primary",
+            key=f"{prefix}confirm",
+            use_container_width=True,
+        ):
+            with st.spinner("저장 중..."):
+                df_merged, stats = li.merge_posts(df.copy(), new_rows)
+                df_merged = _cast(df_merged)
+                ok = _save(df_merged, f"feat: LinkedIn Content 가져오기 — 신규{stats['new']} 갱신{stats['updated']}")
+
+            st.session_state[ss_df] = df_merged
+            if ok:
+                st.success(f"✅ 저장 완료 — 신규 {stats['new']}건, 갱신 {stats['updated']}건")
+            else:
+                st.warning(f"⚠️ 로컬 저장 완료 (GitHub 동기화 실패) — 신규 {stats['new']}건, 갱신 {stats['updated']}건")
+            st.rerun()
 
 
-# ── 지표 계산 ─────────────────────────────────────────────────
+# ── 빈 상태 ───────────────────────────────────────────────────────────
 
-def _calc(df: pd.DataFrame) -> pd.DataFrame:
-    """자동 계산 지표 컬럼을 추가한 DataFrame 반환."""
+def _render_empty_state() -> None:
+    st.markdown("""
+<div style="text-align:center;padding:3rem 1rem;color:#94A3B8">
+  <div style="font-size:2.5rem">📣</div>
+  <div style="font-size:1.1rem;font-weight:600;margin:.5rem 0">
+    LinkedIn Content Excel을 업로드하면 성과 분석이 시작됩니다</div>
+  <div style="font-size:13px">
+    LinkedIn 관리자 &gt; 분석 &gt; 게시물 &gt; 내보내기(.xls/.xlsx)
+  </div>
+</div>""", unsafe_allow_html=True)
+
+
+# ── 지표 보강 ─────────────────────────────────────────────────────────
+
+def _enrich(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    imp = pd.to_numeric(df["impressions"], errors="coerce")
-    rea = pd.to_numeric(df["reactions"],   errors="coerce")
-    com = pd.to_numeric(df["comments"],    errors="coerce")
-    rep = pd.to_numeric(df["reposts"],     errors="coerce")
-    lnk  = pd.to_numeric(df["link_clicks"],          errors="coerce")
-    ga4  = pd.to_numeric(df["ga4_sessions"],          errors="coerce")
-    au   = pd.to_numeric(df["ga4_active_users"],      errors="coerce")
-    eng  = pd.to_numeric(df["ga4_engaged_sessions"],  errors="coerce")
-
-    df["_engage_total"]        = rea.fillna(0) + com.fillna(0) + rep.fillna(0)
-    df["_engage_rate"]         = (df["_engage_total"] / imp * 100).where(imp > 0)
-    df["_ctr"]                 = (lnk / imp * 100).where(imp > 0)
-    df["_ga4_rate"]            = (ga4 / lnk * 100).where(lnk > 0)   # 링크 클릭 → 유입 전환율
-    df["_dashboard_engage"]    = (eng / ga4 * 100).where(ga4 > 0)   # 대시보드 참여율
-    df["_active_per_click"]    = (au  / lnk * 100).where(lnk > 0)   # 클릭당 활성 사용자율
-    df["_hashtag_cnt"]         = df["hashtags"].apply(
-        lambda x: len([h for h in str(x).split(",") if h.strip()]) if pd.notna(x) and str(x).strip() else 0
+    df["_pub"] = pd.to_datetime(df["published_at"], errors="coerce")
+    # pct 표시용 (소수 → %)
+    df["_ctr_pct"]    = df["ctr"].apply(lambda x: x * 100 if pd.notna(x) else np.nan)
+    df["_eng_pct"]    = df["engagement_rate"].apply(lambda x: x * 100 if pd.notna(x) else np.nan)
+    df["_engage_total"] = (
+        df["reactions"].fillna(0)
+        + df["comments"].fillna(0)
+        + df["reposts"].fillna(0)
     )
     return df
 
 
-def _fmt(val, pct=False, na="-"):
+def _fmt(val, pct: bool = False, na: str = "-") -> str:
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return na
     if pct:
@@ -167,718 +242,394 @@ def _fmt(val, pct=False, na="-"):
     return f"{val:,.0f}"
 
 
-# ── UTM 링크 생성 ─────────────────────────────────────────────
+# ── 성과 요약 탭 ──────────────────────────────────────────────────────
 
-def _build_utm(utm_content: str, promotion: str) -> str:
-    medium = "paid_social" if "Paid" in promotion else "organic_social"
-    uc = utm_content.strip()
-    if not uc:
-        return ""
-    return (
-        f"{_DASHBOARD_URL}"
-        f"?utm_source=linkedin&utm_medium={medium}"
-        f"&utm_campaign=keyword_dashboard&utm_content={uc}"
-    )
+def _render_summary(df: pd.DataFrame, prefix: str) -> None:
+    st.markdown("#### 📊 성과 요약")
+
+    imp  = df["impressions"].sum()
+    clk  = df["clicks"].sum()
+    eng_med = df["_eng_pct"].median()
+    n    = len(df)
+
+    # ── KPI 행
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("게시물 수",   f"{n:,}")
+    k2.metric("총 노출수",   f"{imp:,.0f}")
+    k3.metric("총 클릭수",   f"{clk:,.0f}")
+    k4.metric("중앙값 참여율", _fmt(eng_med, pct=True))
+    ctr_med = df["_ctr_pct"].median()
+    k5.metric("중앙값 CTR", _fmt(ctr_med, pct=True))
+
+    st.divider()
+
+    # ── 베스트 게시물 3종
+    c1, c2, c3 = st.columns(3)
+
+    def _best(col: str, label: str, fmt_fn) -> None:
+        sub = df.dropna(subset=[col])
+        if sub.empty:
+            return
+        row = sub.loc[sub[col].idxmax()]
+        st.markdown(f"**{label}**")
+        st.markdown(f"<span style='font-size:13px;color:#374151'>{row['title'][:60]}</span>",
+                    unsafe_allow_html=True)
+        st.markdown(f"<b style='font-size:1.2rem;color:#2F6BFF'>{fmt_fn(row[col])}</b>",
+                    unsafe_allow_html=True)
+        if row.get("_pub") and pd.notna(row["_pub"]):
+            st.caption(str(row["_pub"].date()))
+
+    with c1:
+        _best("_eng_pct", "🏆 최고 참여율", lambda v: f"{v:.1f}%")
+    with c2:
+        _best("clicks",   "🖱️ 최고 클릭수", lambda v: f"{v:,.0f}회")
+    with c3:
+        _best("impressions", "👁 최고 노출수", lambda v: f"{v:,.0f}회")
+
+    # ── 자동 요약 문장
+    try:
+        top_eng = df.loc[df["_eng_pct"].dropna().idxmax() if df["_eng_pct"].notna().any() else 0]
+        top_clk = df.loc[df["clicks"].dropna().idxmax() if df["clicks"].notna().any() else 0]
+        summary = (
+            f"분석 기간({df['_pub'].min().strftime('%Y-%m-%d') if df['_pub'].notna().any() else '?'}"
+            f" ~ {df['_pub'].max().strftime('%Y-%m-%d') if df['_pub'].notna().any() else '?'})에 "
+            f"총 **{n}개** 게시물을 발행했습니다. "
+            f"**{top_eng['title'][:30]}…** 이 참여율 **{top_eng['_eng_pct']:.1f}%** 로 가장 높았고, "
+            f"**{top_clk['title'][:30]}…** 이 **{int(top_clk['impressions']):,}회** 노출·**{int(top_clk['clicks']):,}회** 클릭으로 도달·유입 관심을 가장 많이 만들었습니다."
+        )
+        st.info(summary)
+    except Exception:
+        pass
+
+    st.divider()
+
+    # ── 날짜별 추이 차트
+    df_t = df.dropna(subset=["_pub"]).sort_values("_pub")
+    if len(df_t) >= 2:
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=df_t["_pub"], y=df_t["impressions"],
+                             name="노출수", marker_color="#BFDBFE", yaxis="y"))
+        fig.add_trace(go.Scatter(x=df_t["_pub"], y=df_t["_eng_pct"],
+                                 name="참여율(%)", mode="lines+markers",
+                                 line=dict(color="#2F6BFF", width=2), yaxis="y2"))
+        fig.update_layout(
+            height=280,
+            yaxis=dict(title="노출수"),
+            yaxis2=dict(title="참여율(%)", overlaying="y", side="right"),
+            legend=dict(orientation="h", y=1.08),
+            margin=dict(l=0, r=0, t=30, b=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 통계 시트 일별 추이 (있으면)
+    _render_stats_trend(prefix)
 
 
-# ── 탭 렌더링 (공개 함수) ─────────────────────────────────────
-
-@st.fragment
-def render(prefix: str = "li_") -> None:
-    """dashboard.py 에서 `with tab5: linkedin_tab.render()` 로 호출합니다."""
-
-    # ── 세션 상태 초기화
-    _ss_key = f"{prefix}df"
-    _edit_key = f"{prefix}edit_id"
-    if _ss_key not in st.session_state:
-        st.session_state[_ss_key] = _load()
-    if _edit_key not in st.session_state:
-        st.session_state[_edit_key] = None
-
-    df: pd.DataFrame = st.session_state[_ss_key]
-
-    # ── 헤더
-    st.markdown("""
-<div style="background:#F0F4FF;border-left:4px solid #2F6BFF;
-     padding:12px 16px;border-radius:6px;margin-bottom:1rem;font-size:13px;color:#374151">
-LinkedIn 게시물 분석에서 확인한 수치를 입력하면,
-해시태그·키워드 조합별 노출 및 반응 성과를 비교할 수 있습니다.
-게시 주제, 이미지, 문안, 게시 시간 등도 성과에 영향을 주므로
-<strong>결과는 참고용 상관관계로 해석합니다.</strong>
-</div>""", unsafe_allow_html=True)
-
-    # ── LinkedIn 파일 가져오기 (Excel / CSV)
-    li_import.render_import_section(
-        existing_df=df,
-        prefix=prefix,
-        ss_key=_ss_key,
-        on_save=lambda df_new: _save(df_new, "feat: LinkedIn Excel 가져오기"),
-    )
-    # 가져오기 후 세션 상태 갱신
-    df = st.session_state[_ss_key]
-
-    # ── 상단 버튼 행
-    col_btn1, col_btn2, col_btn3, _ = st.columns([1.5, 1.5, 1.5, 6])
-    with col_btn1:
-        show_form = st.button("➕ 게시물 성과 등록", key=f"{prefix}btn_add",
-                              use_container_width=True)
-    with col_btn2:
-        if len(df) > 0:
-            csv_dl = df.drop(columns=[c for c in df.columns if c.startswith("_")],
-                             errors="ignore").to_csv(index=False).encode("utf-8")
-            st.download_button("⬇ CSV 내보내기", csv_dl,
-                               file_name="linkedin_posts.csv",
-                               mime="text/csv", key=f"{prefix}csv_dl",
-                               use_container_width=True)
-    with col_btn3:
-        # CSV 양식 다운로드
-        template = pd.DataFrame(columns=[c for c in _COLS if c not in ("post_id","added_at")])
-        t_bytes = template.to_csv(index=False).encode("utf-8")
-        st.download_button("📄 CSV 양식", t_bytes,
-                           file_name="linkedin_posts_template.csv",
-                           mime="text/csv", key=f"{prefix}csv_tmpl",
-                           use_container_width=True)
-
-    # ── CSV 직접 불러오기 (보조 기능)
-    with st.expander("📂 CSV 직접 불러오기 (보조)"):
-        st.caption("이미 작성한 linkedin_posts.csv 형식 파일을 전체 교체하는 경우에만 사용하세요.")
-        uploaded = st.file_uploader("linkedin_posts.csv 형식",
-                                    type="csv", key=f"{prefix}csv_up")
-        if uploaded:
-            try:
-                df_up = pd.read_csv(uploaded, dtype=str)
-                df_up = _cast(df_up)
-                # post_id 없으면 생성
-                mask = df_up["post_id"].isna() | (df_up["post_id"].astype(str).str.strip() == "")
-                df_up.loc[mask, "post_id"] = df_up.loc[mask].apply(
-                    lambda r: _make_id(str(r["published_at"]), str(r["title"])), axis=1)
-                if st.button("✅ 이 데이터로 교체", key=f"{prefix}csv_apply"):
-                    st.session_state[_ss_key] = df_up
-                    _save(df_up, "feat: LinkedIn 게시물 CSV 불러오기")
-                    st.success("불러오기 완료!")
-                    st.session_state["_active_tab_idx"] = 4
-                    st.rerun()
-            except Exception as e:
-                st.error(f"CSV 오류: {e}")
-
-    # ── 등록/수정 폼
-    edit_id = st.session_state.get(_edit_key)
-    edit_row = None
-    if edit_id:
-        rows = df[df["post_id"] == edit_id]
-        edit_row = rows.iloc[0] if len(rows) > 0 else None
-
-    if show_form or edit_row is not None:
-        _render_form(df, edit_row, prefix, _ss_key, _edit_key)
-        st.divider()
-
-    # ── 빈 상태
-    if len(df) == 0:
-        st.markdown("""
-<div style="text-align:center;padding:3rem;color:#94A3B8">
-  <div style="font-size:2.5rem">📣</div>
-  <div style="font-size:1.1rem;font-weight:600;margin:.5rem 0">
-    LinkedIn 게시물 분석에서 수치를 등록하면 해시태그별 성과 비교가 시작됩니다</div>
-  <div style="font-size:13px">위 ➕ 게시물 성과 등록 버튼으로 첫 게시물을 입력하세요.</div>
-</div>""", unsafe_allow_html=True)
+def _render_stats_trend(prefix: str) -> None:
+    df_s = st.session_state.get(f"{prefix}stats_df")
+    if df_s is None or len(df_s) == 0:
         return
-
-    # ── 계산 지표 추가
-    df_c = _calc(df)
-
-    # ── 분석 서브탭
-    sub1, sub2, sub3, sub4 = st.tabs([
-        "📋 게시물 목록", "📊 요약 KPI", "#️⃣ 해시태그 분석", "📈 차트"
-    ])
-
-    with sub1:
-        _render_list(df_c, df, prefix, _ss_key, _edit_key)
-
-    with sub2:
-        _render_kpi(df_c, prefix)
-
-    with sub3:
-        _render_hashtags(df_c, prefix)
-
-    with sub4:
-        _render_charts(df_c, prefix)
-
-    # ── 방문자 특성 섹션 (파일 가져오기에서 Visitors 파일 업로드 시 표시)
-    li_import.render_visitors_section(prefix)
+    # 날짜 컬럼 자동 탐지
+    date_col = next((c for c in df_s.columns if "날짜" in str(c) or "date" in str(c).lower()), None)
+    if not date_col:
+        return
+    num_cols = [c for c in df_s.columns if c != date_col
+                and pd.to_numeric(df_s[c], errors="coerce").notna().any()]
+    if not num_cols:
+        return
+    with st.expander("📈 일별 채널 추이 (`통계` 시트)"):
+        df_s2 = df_s[[date_col] + num_cols[:4]].copy()
+        df_s2[date_col] = pd.to_datetime(df_s2[date_col], errors="coerce")
+        df_s2 = df_s2.dropna(subset=[date_col]).sort_values(date_col)
+        for nc in num_cols[:4]:
+            df_s2[nc] = pd.to_numeric(df_s2[nc], errors="coerce")
+        fig = px.line(df_s2, x=date_col, y=num_cols[:4], height=260)
+        fig.update_layout(margin=dict(l=0, r=0, t=20, b=0),
+                          legend=dict(orientation="h", y=1.1))
+        st.plotly_chart(fig, use_container_width=True)
 
 
-# ── 게시물 등록/수정 폼 ───────────────────────────────────────
+# ── 게시물 목록 탭 ────────────────────────────────────────────────────
 
-def _render_form(df: pd.DataFrame, edit_row, prefix: str, ss_key: str, edit_key: str):
-    is_edit = edit_row is not None
-    title_str = "✏️ 게시물 수정" if is_edit else "➕ 게시물 성과 등록"
+def _render_list(df: pd.DataFrame, prefix: str) -> None:
+    st.markdown("#### 📋 게시물 목록")
 
-    def _get(col, default=""):
-        if is_edit and col in edit_row.index:
-            v = edit_row[col]
-            return default if (v is None or (isinstance(v, float) and np.isnan(v))) else v
-        return default
+    # 필터 행
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
+        min_d = df["_pub"].min()
+        max_d = df["_pub"].max()
+        date_range = st.date_input(
+            "기간", value=(min_d.date() if pd.notna(min_d) else None,
+                           max_d.date() if pd.notna(max_d) else None),
+            key=f"{prefix}list_dr",
+        )
+    with fc2:
+        sort_by = st.selectbox("정렬 기준",
+            ["게시일 (최신순)", "참여율 (높은순)", "노출수 (높은순)", "클릭 (높은순)"],
+            key=f"{prefix}list_sort",
+        )
+    with fc3:
+        min_imp = st.number_input("최소 노출수", min_value=0, value=0, key=f"{prefix}list_imp")
 
-    with st.form(key=f"{prefix}post_form", border=True):
-        st.markdown(f"**{title_str}**")
-        st.caption("LinkedIn 게시물 분석 화면에서 확인한 수치를 직접 입력하세요.")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            f_date = st.date_input("게시일 *", value=pd.to_datetime(_get("published_at", date.today())).date()
-                                   if _get("published_at") else date.today(),
-                                   key=f"{prefix}f_date")
-            f_title = st.text_input("게시물 제목 또는 식별명 *",
-                                    value=str(_get("title")), key=f"{prefix}f_title",
-                                    placeholder="예: AI 에이전트 트렌드 인사이트")
-            f_url = st.text_input("LinkedIn 게시물 URL *",
-                                  value=str(_get("url")), key=f"{prefix}f_url",
-                                  placeholder="https://www.linkedin.com/feed/update/urn:li:activity:...")
-            f_ct = st.selectbox("콘텐츠 유형 *", _CONTENT_TYPES,
-                                index=_CONTENT_TYPES.index(_get("content_type", _CONTENT_TYPES[0]))
-                                if _get("content_type") in _CONTENT_TYPES else 0,
-                                key=f"{prefix}f_ct")
-            f_campaign = st.text_input("주요 주제 또는 캠페인명 *",
-                                       value=str(_get("campaign")), key=f"{prefix}f_campaign",
-                                       placeholder="예: AI 에이전트")
-            f_hashtags = st.text_area("해시태그 *  (쉼표 또는 줄바꿈 구분)",
-                                      value=str(_get("hashtags")), key=f"{prefix}f_tags",
-                                      placeholder="#AIAgent, #AgentOps, #MicrosoftCopilot",
-                                      height=90)
-            f_discovery = st.selectbox(
-                "키워드 발굴 경로 *", _DISCOVERY_PATHS,
-                index=_DISCOVERY_PATHS.index(_get("discovery_path", _DISCOVERY_PATHS[0]))
-                if _get("discovery_path") in _DISCOVERY_PATHS else 0,
-                key=f"{prefix}f_disc",
-            )
-            f_src_kw = st.text_input(
-                "대시보드에서 발굴한 원본 키워드  (선택, 쉼표 구분)",
-                value=str(_get("source_keywords")), key=f"{prefix}f_srckw",
-                placeholder="AI Agent, Zero Trust, Copilot",
-                help="발굴 경로가 '키워드 대시보드 발굴' 또는 '혼합'일 때 입력하면 분석에 활용됩니다.",
-            )
-        with col2:
-            f_measured = st.date_input("수치 확인일 *",
-                                       value=pd.to_datetime(_get("measured_at", date.today())).date()
-                                       if _get("measured_at") else date.today(),
-                                       key=f"{prefix}f_measured")
-            f_imp  = st.number_input("노출수 (Impressions) *", min_value=0,
-                                     value=int(_get("impressions", 0) or 0), key=f"{prefix}f_imp")
-            f_rea  = st.number_input("반응 수 (Reactions) *", min_value=0,
-                                     value=int(_get("reactions", 0) or 0), key=f"{prefix}f_rea")
-            f_com  = st.number_input("댓글 수 (Comments) *", min_value=0,
-                                     value=int(_get("comments", 0) or 0), key=f"{prefix}f_com")
-            f_rep  = st.number_input("공유·리포스트 수 (Reposts) *", min_value=0,
-                                     value=int(_get("reposts", 0) or 0), key=f"{prefix}f_rep")
-            f_lnk  = st.number_input("링크 클릭 수 (Link clicks, 없으면 0)", min_value=0,
-                                     value=int(_get("link_clicks", 0) or 0), key=f"{prefix}f_lnk")
-            st.markdown("**GA4 대시보드 유입 지표** (UTM 보고서에서 확인)")
-            f_ga4  = st.number_input("GA4 유입 세션 수 (없으면 0)", min_value=0,
-                                     value=int(_get("ga4_sessions", 0) or 0), key=f"{prefix}f_ga4")
-            f_au   = st.number_input("GA4 활성 사용자 수 (없으면 0)", min_value=0,
-                                     value=int(_get("ga4_active_users", 0) or 0), key=f"{prefix}f_au")
-            f_eng  = st.number_input("GA4 참여 세션 수 (없으면 0)", min_value=0,
-                                     value=int(_get("ga4_engaged_sessions", 0) or 0), key=f"{prefix}f_eng")
-            f_sec  = st.number_input("GA4 평균 참여 시간 (초, 선택)", min_value=0,
-                                     value=int(_get("ga4_avg_engage_sec", 0) or 0), key=f"{prefix}f_sec")
-
-        col3, col4 = st.columns(2)
-        with col3:
-            f_utm = st.text_input("UTM content 값 (선택)",
-                                  value=str(_get("utm_content")), key=f"{prefix}f_utm",
-                                  placeholder="20261021_ai_agent")
-            f_promo = st.selectbox("유료 프로모션 여부", ["Organic", "Paid·Boosted"],
-                                   index=0 if _get("promotion", "Organic") == "Organic" else 1,
-                                   key=f"{prefix}f_promo")
-        with col4:
-            f_note = st.text_area("비고 (선택)", value=str(_get("note")),
-                                  key=f"{prefix}f_note", height=80)
-
-        # UTM 링크 미리보기
-        if f_utm.strip():
-            utm_link = _build_utm(f_utm, f_promo)
-            st.markdown(f"**🔗 생성된 추적 링크:**")
-            st.code(utm_link, language=None)
-
-        save_col, cancel_col = st.columns([1, 3])
-        with save_col:
-            submitted = st.form_submit_button(
-                "저장" if is_edit else "등록", use_container_width=True, type="primary")
-        with cancel_col:
-            cancelled = st.form_submit_button("취소", use_container_width=True)
-
-        if cancelled:
-            st.session_state[edit_key] = None
-            st.session_state["_active_tab_idx"] = 4
-            st.rerun()
-
-        if submitted:
-            # ── 유효성 검사
-            errors = []
-            if not f_title.strip():
-                errors.append("게시물 제목을 입력하세요.")
-            if not f_url.strip():
-                errors.append("LinkedIn URL을 입력하세요.")
-            if f_imp <= 0:
-                errors.append("노출수는 1 이상이어야 합니다.")
-            if f_hashtags.strip() == "":
-                errors.append("해시태그를 1개 이상 입력하세요.")
-
-            # URL 중복 검사 (수정 제외)
-            if f_url.strip():
-                dup = df[df["url"].astype(str).str.strip() == f_url.strip()]
-                if is_edit:
-                    dup = dup[dup["post_id"] != edit_row["post_id"]]
-                if len(dup) > 0:
-                    errors.append(f"이미 등록된 URL입니다: {dup.iloc[0]['title']}")
-
-            if errors:
-                for e in errors:
-                    st.error(e)
-            else:
-                post_id = edit_row["post_id"] if is_edit else _make_id(
-                    str(f_date), f_title.strip())
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                row = {
-                    "post_id"       : post_id,
-                    "published_at"  : str(f_date),
-                    "title"         : f_title.strip(),
-                    "url"           : f_url.strip(),
-                    "content_type"  : f_ct,
-                    "campaign"      : f_campaign.strip(),
-                    "hashtags"      : _normalize_hashtags(f_hashtags),
-                    "discovery_path": f_discovery,
-                    "source_keywords": f_src_kw.strip(),
-                    "impressions" : f_imp,
-                    "reactions"   : f_rea,
-                    "comments"    : f_com,
-                    "reposts"     : f_rep,
-                    "link_clicks"          : f_lnk if f_lnk > 0 else np.nan,
-                    "ga4_sessions"         : f_ga4 if f_ga4 > 0 else np.nan,
-                    "ga4_active_users"     : f_au  if f_au  > 0 else np.nan,
-                    "ga4_engaged_sessions" : f_eng if f_eng > 0 else np.nan,
-                    "ga4_avg_engage_sec"   : f_sec if f_sec > 0 else np.nan,
-                    "utm_content" : f_utm.strip(),
-                    "promotion"   : f_promo,
-                    "measured_at" : str(f_measured),
-                    "note"        : f_note.strip(),
-                    "added_at"    : now_str if not is_edit else _get("added_at", now_str),
-                }
-                new_row = pd.DataFrame([row])
-                if is_edit:
-                    df_new = df[df["post_id"] != post_id].copy()
-                    df_new = pd.concat([new_row, df_new], ignore_index=True)
-                else:
-                    df_new = pd.concat([df, new_row], ignore_index=True)
-
-                df_new = df_new[_COLS]
-                ok = _save(df_new, f"feat: LinkedIn 게시물 {'수정' if is_edit else '등록'} — {f_title.strip()[:30]}")
-                st.session_state[ss_key] = df_new
-                st.session_state[edit_key] = None
-                if ok:
-                    st.success("✅ GitHub에 저장됐습니다.")
-                else:
-                    st.warning("⚠️ 로컬 저장 완료 (GitHub 동기화 실패 — 토큰 확인 필요)")
-                st.session_state["_active_tab_idx"] = 4
-                st.rerun()
-
-
-# ── 게시물 목록 탭 ────────────────────────────────────────────
-
-def _render_list(df_c: pd.DataFrame, df_raw: pd.DataFrame,
-                 prefix: str, ss_key: str, edit_key: str):
-    st.markdown("#### 게시물 성과 목록")
-
-    # 필터
-    f_col1, f_col2, f_col3, f_col4 = st.columns(4)
-    with f_col1:
-        min_d = pd.to_datetime(df_c["published_at"], errors="coerce").min()
-        max_d = pd.to_datetime(df_c["published_at"], errors="coerce").max()
-        date_range = st.date_input("기간", value=(min_d.date() if pd.notna(min_d) else date.today(),
-                                                   max_d.date() if pd.notna(max_d) else date.today()),
-                                   key=f"{prefix}list_dr")
-    with f_col2:
-        ct_opts = ["전체"] + _CONTENT_TYPES
-        sel_ct = st.selectbox("콘텐츠 유형", ct_opts, key=f"{prefix}list_ct")
-    with f_col3:
-        campaigns = ["전체"] + sorted(df_c["campaign"].dropna().unique().tolist())
-        sel_camp = st.selectbox("주제/캠페인", campaigns, key=f"{prefix}list_camp")
-    with f_col4:
-        sel_promo = st.selectbox("프로모션", ["전체", "Organic", "Paid·Boosted"],
-                                 key=f"{prefix}list_promo")
-
-    df_f = df_c.copy()
-    df_f["_pub"] = pd.to_datetime(df_f["published_at"], errors="coerce")
+    df_f = df.copy()
     if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
         s, e = pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])
         df_f = df_f[(df_f["_pub"] >= s) & (df_f["_pub"] <= e)]
-    if sel_ct != "전체":
-        df_f = df_f[df_f["content_type"] == sel_ct]
-    if sel_camp != "전체":
-        df_f = df_f[df_f["campaign"] == sel_camp]
-    if sel_promo != "전체":
-        df_f = df_f[df_f["promotion"] == sel_promo]
+    if min_imp > 0:
+        df_f = df_f[df_f["impressions"] >= min_imp]
 
-    # 특정 해시태그 필터
-    tag_filter = st.text_input("특정 해시태그 포함 검색 (예: #aIAgent)",
-                                key=f"{prefix}list_tag",
-                                placeholder="#aIAgent 또는 aIAgent")
-    if tag_filter.strip():
-        tq = "#" + tag_filter.strip().lstrip("#").lower()
-        df_f = df_f[df_f["hashtags"].astype(str).str.lower().str.contains(tq, na=False)]
+    sort_map = {
+        "게시일 (최신순)": ("_pub", False),
+        "참여율 (높은순)": ("_eng_pct", False),
+        "노출수 (높은순)": ("impressions", False),
+        "클릭 (높은순)": ("clicks", False),
+    }
+    sc, sa = sort_map[sort_by]
+    df_f = df_f.sort_values(sc, ascending=sa, na_position="last")
 
-    # 정렬: 참여율 높은 순
-    df_f = df_f.sort_values("_engage_rate", ascending=False, na_position="last")
-
-    if len(df_f) == 0:
-        st.info("조건에 맞는 게시물이 없습니다.")
-        return
-
-    # 표시 테이블
+    # 표 렌더링
     display_rows = []
     for _, r in df_f.iterrows():
         display_rows.append({
-            "게시일"      : r["published_at"],
-            "제목"        : r["title"],
-            "유형"        : r["content_type"],
-            "발굴 경로"   : r.get("discovery_path", ""),
-            "노출수"      : _fmt(r["impressions"]),
-            "참여 수"     : _fmt(r["_engage_total"]),
-            "참여율"      : _fmt(r["_engage_rate"], pct=True),
-            "CTR"         : _fmt(r["_ctr"], pct=True),
-            "GA4 유입"    : _fmt(r["ga4_sessions"]),
-            "태그 수"     : int(r["_hashtag_cnt"]) if pd.notna(r["_hashtag_cnt"]) else 0,
-            "구분"        : r["promotion"],
-            "post_id"     : r["post_id"],
+            "게시일"    : str(r["_pub"].date()) if pd.notna(r["_pub"]) else "-",
+            "게시물 요약": r["title"],
+            "해시태그"  : r["hashtags"] or "-",
+            "노출"      : _fmt(r["impressions"]),
+            "클릭"      : _fmt(r["clicks"]),
+            "CTR"       : _fmt(r["_ctr_pct"], pct=True),
+            "반응"      : _fmt(r["reactions"]),
+            "댓글"      : _fmt(r["comments"]),
+            "퍼감"      : _fmt(r["reposts"]),
+            "참여율"    : _fmt(r["_eng_pct"], pct=True),
+            "원문"      : r["url"],
         })
+
     df_disp = pd.DataFrame(display_rows)
-    st.dataframe(df_disp.drop(columns=["post_id"]),
-                 use_container_width=True, hide_index=True)
+    st.dataframe(
+        df_disp,
+        use_container_width=True,
+        height=420,
+        column_config={
+            "원문": st.column_config.LinkColumn("원문", display_text="링크"),
+            "게시물 요약": st.column_config.TextColumn("게시물 요약", width="large"),
+        },
+    )
+    st.caption(f"총 {len(df_f)}건")
 
-    # 수정/삭제
-    st.markdown("**게시물 수정 또는 삭제:**")
-    titles = df_f["title"].tolist()
-    ids    = df_f["post_id"].tolist()
-    sel_title = st.selectbox("게시물 선택", ["— 선택 —"] + titles,
-                              key=f"{prefix}list_sel")
-    if sel_title != "— 선택 —":
-        idx = titles.index(sel_title)
-        sel_id = ids[idx]
-        edit_col, del_col = st.columns([1, 1])
-        with edit_col:
-            if st.button("✏️ 수정", key=f"{prefix}btn_edit"):
-                st.session_state[edit_key] = sel_id
-                st.session_state["_active_tab_idx"] = 4
-                st.rerun()
-        with del_col:
-            if st.button("🗑️ 삭제", key=f"{prefix}btn_del"):
-                st.session_state[f"{prefix}del_confirm"] = sel_id
-
-    # 삭제 확인
-    del_id = st.session_state.get(f"{prefix}del_confirm")
-    if del_id:
-        rows = df_raw[df_raw["post_id"] == del_id]
-        del_title = rows.iloc[0]["title"] if len(rows) > 0 else del_id
-        st.warning(f"'{del_title}' 을 삭제하시겠습니까?")
-        c1, c2, _ = st.columns([1, 1, 4])
-        with c1:
-            if st.button("확인 삭제", type="primary", key=f"{prefix}del_ok"):
-                df_new = df_raw[df_raw["post_id"] != del_id].reset_index(drop=True)
-                ok = _save(df_new, f"feat: LinkedIn 게시물 삭제 — {del_title[:30]}")
-                st.session_state[ss_key] = df_new
-                st.session_state[f"{prefix}del_confirm"] = None
-                st.session_state["_active_tab_idx"] = 4
-                st.success("삭제됐습니다.")
-                st.rerun()
-        with c2:
-            if st.button("취소", key=f"{prefix}del_cancel"):
-                st.session_state[f"{prefix}del_confirm"] = None
-                st.session_state["_active_tab_idx"] = 4
-                st.rerun()
+    # CSV 내보내기
+    csv_bytes = df_f.drop(
+        columns=[c for c in df_f.columns if c.startswith("_")], errors="ignore"
+    ).to_csv(index=False).encode("utf-8-sig")
+    st.download_button("⬇ CSV 내보내기", csv_bytes,
+                       file_name="linkedin_posts.csv", mime="text/csv",
+                       key=f"{prefix}csv_dl")
 
 
-# ── 요약 KPI ─────────────────────────────────────────────────
+# ── 해시태그 관찰 탭 ──────────────────────────────────────────────────
 
-def _render_kpi(df_c: pd.DataFrame, prefix: str):
-    st.markdown("#### 요약 KPI")
+def _render_hashtags(df: pd.DataFrame, prefix: str) -> None:
+    st.markdown("#### #️⃣ 해시태그 관찰")
 
-    # 기간 필터
-    col_dr, col_promo = st.columns([2, 1])
-    with col_dr:
-        min_d = pd.to_datetime(df_c["published_at"], errors="coerce").min()
-        max_d = pd.to_datetime(df_c["published_at"], errors="coerce").max()
-        kpi_dr = st.date_input("기간 필터", value=(min_d.date() if pd.notna(min_d) else date.today(),
-                                                    max_d.date() if pd.notna(max_d) else date.today()),
-                               key=f"{prefix}kpi_dr")
-    with col_promo:
-        inc_paid = st.checkbox("Paid·Boosted 포함", value=False, key=f"{prefix}kpi_paid")
-
-    df_k = df_c.copy()
-    df_k["_pub"] = pd.to_datetime(df_k["published_at"], errors="coerce")
-    if isinstance(kpi_dr, (list, tuple)) and len(kpi_dr) == 2:
-        s, e = pd.Timestamp(kpi_dr[0]), pd.Timestamp(kpi_dr[1])
-        df_k = df_k[(df_k["_pub"] >= s) & (df_k["_pub"] <= e)]
-
-    df_organic = df_k[df_k["promotion"] == "Organic"]
-    df_base    = df_k if inc_paid else df_organic
-
-    total      = len(df_base)
-    total_imp  = df_base["impressions"].sum()
-    avg_er     = df_base["_engage_rate"].mean()
-    med_er     = df_base["_engage_rate"].median()
-    avg_ctr    = df_base["_ctr"].mean()
-    total_ga4  = df_base["ga4_sessions"].sum()
-    org_avg_er = df_organic["_engage_rate"].mean() if len(df_organic) > 0 else float("nan")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("등록 게시물", f"{total}건")
-    c2.metric("총 노출수", _fmt(total_imp))
-    c3.metric("평균 참여율", _fmt(avg_er, pct=True))
-    c4.metric("중앙값 참여율", _fmt(med_er, pct=True))
-
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric("평균 링크 클릭률", _fmt(avg_ctr, pct=True))
-    c6.metric("GA4 총 유입 세션", _fmt(total_ga4))
-    c7.metric("Organic 평균 참여율", _fmt(org_avg_er, pct=True))
-    c8.metric("Paid·Boosted 포함", "예" if inc_paid else "아니오 (기본)")
-
-    st.caption("Boosted 게시물은 기본적으로 제외됩니다. 위 체크박스로 포함할 수 있습니다.")
-
-    # ── 발굴 경로 비교 KPI
-    st.divider()
-    st.markdown("##### 🔍 키워드 발굴 경로별 관찰 비교")
-    st.caption(
-        "두 그룹의 평균·중앙값 참여율과 링크 클릭률을 비교합니다. "
-        "발굴 경로 외에도 콘텐츠 품질·시간 등 다양한 변수가 영향을 주므로 인과관계로 단정하지 마세요."
+    st.warning(
+        "해시태그별 결과는 게시 주제·이미지·게시 시간·광고 여부 등의 영향을 함께 받는 **관찰치**이며, "
+        "해시태그 단독 효과나 인과관계를 의미하지 않습니다.",
+        icon="⚠️",
     )
 
-    df_dash = df_base[df_base["discovery_path"] == "키워드 대시보드 발굴"]
-    df_other = df_base[df_base["discovery_path"] != "키워드 대시보드 발굴"]
+    # 해시태그별 집계
+    records: list[dict] = []
+    tag_posts: dict[str, list[int]] = {}
 
-    n_dash  = len(df_dash)
-    n_other = len(df_other)
+    for i, row in df.iterrows():
+        tags = [t.strip() for t in str(row.get("hashtags", "") or "").split(",") if t.strip()]
+        for tag in tags:
+            tag_posts.setdefault(tag, []).append(i)
 
-    low_dash  = n_dash  < 3
-    low_other = n_other < 3
+    for tag, idxs in tag_posts.items():
+        sub = df.loc[idxs]
+        n = len(sub)
+        records.append({
+            "해시태그"        : tag,
+            "게시물 수"       : n,
+            "총 노출수"       : sub["impressions"].sum(),
+            "중앙값 노출"     : sub["impressions"].median(),
+            "총 클릭"         : sub["clicks"].sum(),
+            "중앙값 클릭"     : sub["clicks"].median(),
+            "중앙값 참여율"   : sub["_eng_pct"].median(),
+            "_n"              : n,
+        })
 
-    kc1, kc2 = st.columns(2)
+    if not records:
+        st.info("해시태그 데이터가 없습니다. 게시물 본문에 #태그가 포함된 게시물을 가져오면 자동 분석됩니다.")
+        return
 
-    with kc1:
-        badge = " ⚠️ 비교 표본 부족" if low_dash else ""
-        st.markdown(f"**대시보드 발굴{badge}**")
-        st.metric("게시물 수", f"{n_dash}건")
-        st.metric("평균 참여율",  _fmt(df_dash["_engage_rate"].mean(),  pct=True))
-        st.metric("중앙값 참여율", _fmt(df_dash["_engage_rate"].median(), pct=True))
-        st.metric("평균 링크 클릭률", _fmt(df_dash["_ctr"].mean(), pct=True))
+    df_ht = pd.DataFrame(records).sort_values("총 노출수", ascending=False)
 
-    with kc2:
-        badge2 = " ⚠️ 비교 표본 부족" if low_other else ""
-        st.markdown(f"**기타 발굴 경로{badge2}**")
-        st.metric("게시물 수", f"{n_other}건")
-        st.metric("평균 참여율",  _fmt(df_other["_engage_rate"].mean(),  pct=True))
-        st.metric("중앙값 참여율", _fmt(df_other["_engage_rate"].median(), pct=True))
-        st.metric("평균 링크 클릭률", _fmt(df_other["_ctr"].mean(), pct=True))
+    # 상시 태그 감지 (전체 게시물 >= 80% 이상 등장)
+    total_posts = len(df)
+    always_tags = {r["해시태그"] for r in records if r["_n"] / total_posts >= 0.8}
 
-    if low_dash or low_other:
-        st.info(
-            "⚠️ **비교 표본 부족:** 한 그룹의 게시물이 3건 미만입니다. "
-            "데이터가 더 쌓인 후 해석하세요."
+    df_rank = df_ht[df_ht["_n"] >= 3].copy()  # 3건 이상만 비교
+    df_low  = df_ht[df_ht["_n"] < 3].copy()
+
+    if len(df_rank) > 0:
+        st.markdown("**✅ 성과 비교 (3건 이상 게시물)**")
+        if always_tags:
+            st.caption(f"상시 태그({', '.join(always_tags)})는 모든 게시물에 공통 적용되어 비교 의미가 낮습니다.")
+
+        display_rank = df_rank.copy()
+        display_rank["중앙값 참여율"] = display_rank["중앙값 참여율"].apply(
+            lambda x: f"{x:.1f}%" if pd.notna(x) else "-"
+        )
+        display_rank["중앙값 노출"] = display_rank["중앙값 노출"].apply(
+            lambda x: f"{x:,.0f}" if pd.notna(x) else "-"
+        )
+        display_rank["중앙값 클릭"] = display_rank["중앙값 클릭"].apply(
+            lambda x: f"{x:,.0f}" if pd.notna(x) else "-"
+        )
+        st.dataframe(
+            display_rank[["해시태그", "게시물 수", "총 노출수", "중앙값 노출",
+                           "총 클릭", "중앙값 클릭", "중앙값 참여율"]],
+            use_container_width=True, hide_index=True,
         )
 
+        # 차트
+        rank_chart = df_rank[~df_rank["해시태그"].isin(always_tags)].head(10)
+        if len(rank_chart) > 0:
+            fig = px.bar(
+                rank_chart.sort_values("중앙값 참여율"),
+                x="중앙값 참여율", y="해시태그",
+                orientation="h", text="게시물 수",
+                title="해시태그별 중앙값 참여율 (상시 태그 제외)",
+                color_discrete_sequence=["#3B82F6"],
+                height=max(220, len(rank_chart) * 35),
+            )
+            fig.update_traces(textposition="outside")
+            fig.update_layout(margin=dict(l=0, r=20, t=40, b=0))
+            st.plotly_chart(fig, use_container_width=True)
 
-# ── 해시태그 분석 ─────────────────────────────────────────────
-
-def _explode_tags(df: pd.DataFrame) -> pd.DataFrame:
-    """해시태그 컬럼을 행으로 분해한 DataFrame 반환."""
-    rows = []
-    for _, r in df.iterrows():
-        tags = [t.strip() for t in str(r.get("hashtags", "")).split(",") if t.strip()]
-        for tag in tags:
-            rows.append({
-                "hashtag"             : tag,
-                "impressions"         : r["impressions"],
-                "_engage_rate"        : r["_engage_rate"],
-                "_ctr"                : r["_ctr"],
-                "link_clicks"         : pd.to_numeric(r.get("link_clicks"), errors="coerce"),
-                "ga4_sessions"        : pd.to_numeric(r.get("ga4_sessions"), errors="coerce"),
-                "ga4_active_users"    : pd.to_numeric(r.get("ga4_active_users"), errors="coerce"),
-                "ga4_engaged_sessions": pd.to_numeric(r.get("ga4_engaged_sessions"), errors="coerce"),
-                "_ga4_rate"           : r.get("_ga4_rate"),
-                "_dashboard_engage"   : r.get("_dashboard_engage"),
-                "published_at"        : r["published_at"],
-                "post_id"             : r["post_id"],
-            })
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
+    if len(df_low) > 0:
+        with st.expander(f"🔍 학습 중 — 표본 부족 ({len(df_low)}개 태그, 3건 미만)"):
+            st.caption("아직 게시물 수가 적어 패턴을 파악하기 어렵습니다. 계속 관찰하세요.")
+            st.dataframe(
+                df_low[["해시태그", "게시물 수", "총 노출수", "총 클릭"]],
+                use_container_width=True, hide_index=True,
+            )
 
 
-def _render_hashtags(df_c: pd.DataFrame, prefix: str):
-    inc_paid_ht = st.checkbox("Paid·Boosted 포함", value=False, key=f"{prefix}ht_paid")
-    df_ht = df_c if inc_paid_ht else df_c[df_c["promotion"] == "Organic"]
+# ── 고급·보조 기능 ────────────────────────────────────────────────────
 
-    if len(df_ht) == 0:
-        st.info("분석할 데이터가 없습니다.")
-        return
+def _render_advanced(df: pd.DataFrame, prefix: str, ss_df: str) -> None:
+    with st.expander("⚙️ 고급·보조 기능 (수동 등록 / CSV)"):
+        st.caption(
+            "아래 기능은 LinkedIn Content Excel 업로드로 커버되지 않는 경우에만 사용하세요."
+        )
 
-    df_tags = _explode_tags(df_ht)
-    if df_tags.empty:
-        st.info("해시태그 데이터가 없습니다.")
-        return
+        adv1, adv2 = st.tabs(["📝 게시물 수동 등록", "📂 CSV 직접 불러오기"])
 
-    # ── A. 해시태그별 관찰 성과 ──────────────────────────────
-    st.markdown("#### 해시태그별 관찰 성과")
-    st.caption("이 표는 해시태그 사용과 성과의 상관관계를 보여주며, 해시태그가 성과를 유발했다고 단정할 수 없습니다.")
+        with adv1:
+            _render_manual_form(df, prefix, ss_df)
 
-    agg_perf = df_tags.groupby("hashtag").agg(
-        사용_게시물_수 = ("post_id",       "count"),
-        총_노출수      = ("impressions",    "sum"),
-        평균_참여율    = ("_engage_rate",   "mean"),
-        중앙값_참여율  = ("_engage_rate",   "median"),
-        평균_CTR      = ("_ctr",           "mean"),
-        총_링크클릭    = ("link_clicks",    "sum"),
-        총_GA4유입    = ("ga4_sessions",   "sum"),
-        최고_참여율   = ("_engage_rate",   "max"),
-        최근_사용일   = ("published_at",    "max"),
-    ).reset_index().sort_values("평균_참여율", ascending=False)
-
-    agg_perf["비고"]       = agg_perf["사용_게시물_수"].apply(lambda n: "⚠️ 표본 부족" if n < 3 else "")
-    agg_perf["평균_참여율"]  = agg_perf["평균_참여율"].apply(lambda x: _fmt(x, pct=True))
-    agg_perf["중앙값_참여율"] = agg_perf["중앙값_참여율"].apply(lambda x: _fmt(x, pct=True))
-    agg_perf["평균_CTR"]     = agg_perf["평균_CTR"].apply(lambda x: _fmt(x, pct=True))
-    agg_perf["총_노출수"]    = agg_perf["총_노출수"].apply(_fmt)
-    agg_perf["총_링크클릭"]  = agg_perf["총_링크클릭"].apply(_fmt)
-    agg_perf["총_GA4유입"]   = agg_perf["총_GA4유입"].apply(_fmt)
-    agg_perf["최고_참여율"]  = agg_perf["최고_참여율"].apply(lambda x: _fmt(x, pct=True))
-
-    st.dataframe(agg_perf.rename(columns={"hashtag": "해시태그"}),
-                 use_container_width=True, hide_index=True)
-    st.caption(
-        "**표본 부족(3건 미만):** 소수의 게시물로 측정된 평균은 우연한 변동에 민감합니다. "
-        "동일 해시태그를 최소 3건 이상 사용한 후 해석하세요."
-    )
-
-    # ── B. 해시태그별 유입 기여 관찰 ─────────────────────────
-    st.divider()
-    st.markdown("#### 해시태그별 유입 기여 관찰")
-    st.caption(
-        "LinkedIn은 사용자가 특정 해시태그를 통해 게시물을 발견했는지 직접 제공하지 않습니다. "
-        "**본 표는 해당 해시태그를 포함한 게시물군의 관찰된 대시보드 유입 성과이며, "
-        "개별 해시태그의 순수 인과 효과를 의미하지 않습니다.**"
-    )
-    st.info(
-        "한 게시물에는 여러 해시태그와 콘텐츠 요소가 함께 적용됩니다. "
-        "본 표는 특정 해시태그를 포함한 게시물군의 관찰된 대시보드 유입 성과이며, "
-        "개별 해시태그의 순수 인과 효과를 의미하지 않습니다.",
-        icon="ℹ️",
-    )
-
-    # 게시물당 GA4 유입 세션 집계 (평균·중앙값은 per-post로 계산)
-    agg_inflow = df_tags.groupby("hashtag").agg(
-        사용_게시물_수         = ("post_id",             "count"),
-        총_링크_클릭           = ("link_clicks",          "sum"),
-        총_GA4_유입_세션       = ("ga4_sessions",         "sum"),
-        총_GA4_활성_사용자     = ("ga4_active_users",     "sum"),
-        총_GA4_참여_세션       = ("ga4_engaged_sessions", "sum"),
-        평균_GA4_유입_세션     = ("ga4_sessions",         "mean"),
-        중앙값_GA4_유입_세션   = ("ga4_sessions",         "median"),
-        최근_사용일            = ("published_at",          "max"),
-    ).reset_index()
-
-    # 링크 클릭 → 대시보드 유입 전환율 (총계 기반)
-    agg_inflow["링크→유입_전환율"] = (
-        agg_inflow["총_GA4_유입_세션"] / agg_inflow["총_링크_클릭"] * 100
-    ).where(agg_inflow["총_링크_클릭"] > 0)
-
-    # 대시보드 참여율 (총계 기반)
-    agg_inflow["대시보드_참여율"] = (
-        agg_inflow["총_GA4_참여_세션"] / agg_inflow["총_GA4_유입_세션"] * 100
-    ).where(agg_inflow["총_GA4_유입_세션"] > 0)
-
-    agg_inflow = agg_inflow.sort_values("총_GA4_유입_세션", ascending=False)
-    agg_inflow["비고"] = agg_inflow["사용_게시물_수"].apply(lambda n: "⚠️ 표본 부족" if n < 3 else "")
-
-    # 포맷
-    for col in ["총_링크_클릭", "총_GA4_유입_세션", "총_GA4_활성_사용자", "총_GA4_참여_세션"]:
-        agg_inflow[col] = agg_inflow[col].apply(_fmt)
-    agg_inflow["평균_GA4_유입_세션"]   = agg_inflow["평균_GA4_유입_세션"].apply(_fmt)
-    agg_inflow["중앙값_GA4_유입_세션"] = agg_inflow["중앙값_GA4_유입_세션"].apply(_fmt)
-    agg_inflow["링크→유입_전환율"]     = agg_inflow["링크→유입_전환율"].apply(lambda x: _fmt(x, pct=True))
-    agg_inflow["대시보드_참여율"]       = agg_inflow["대시보드_참여율"].apply(lambda x: _fmt(x, pct=True))
-
-    st.dataframe(
-        agg_inflow.rename(columns={"hashtag": "해시태그"}),
-        use_container_width=True, hide_index=True,
-    )
-    st.caption(
-        "**링크→유입 전환율:** LinkedIn 링크 클릭 중 실제로 대시보드에 유입된 비율. "
-        "**대시보드 참여율:** GA4 유입 세션 중 참여 세션(30초 이상 체류·2페이지 이상 등) 비율."
-    )
+        with adv2:
+            uploaded_csv = st.file_uploader(
+                "linkedin_posts.csv 형식 파일",
+                type="csv",
+                key=f"{prefix}csv_up",
+            )
+            if uploaded_csv:
+                try:
+                    df_up = _cast(pd.read_csv(uploaded_csv, dtype=str))
+                    mask = df_up["post_id"].isna() | (df_up["post_id"].astype(str).str.strip() == "")
+                    import hashlib
+                    df_up.loc[mask, "post_id"] = df_up.loc[mask].apply(
+                        lambda r: hashlib.md5(str(r["url"]).encode()).hexdigest()[:12], axis=1
+                    )
+                    st.dataframe(df_up.head(5), use_container_width=True)
+                    if st.button("✅ 이 데이터로 교체", key=f"{prefix}csv_apply"):
+                        st.session_state[ss_df] = df_up
+                        _save(df_up, "feat: LinkedIn CSV 직접 불러오기")
+                        st.success("불러오기 완료!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"CSV 오류: {e}")
 
 
-# ── 차트 ────────────────────────────────────────────────────
+def _render_manual_form(df: pd.DataFrame, prefix: str, ss_df: str) -> None:
+    import hashlib
+    from datetime import date
 
-def _render_charts(df_c: pd.DataFrame, prefix: str):
-    st.markdown("#### 시각화")
-    inc_paid_ch = st.checkbox("Paid·Boosted 포함", value=False, key=f"{prefix}ch_paid")
-    df_ch = df_c if inc_paid_ch else df_c[df_c["promotion"] == "Organic"]
+    with st.form(key=f"{prefix}manual_form", border=True):
+        st.markdown("**게시물 성과 수동 등록**")
+        st.caption("LinkedIn Content Excel에 포함되지 않은 게시물을 직접 입력합니다.")
 
-    if len(df_ch) == 0:
-        st.info("차트를 표시할 데이터가 없습니다.")
-        return
+        c1, c2 = st.columns(2)
+        with c1:
+            f_date = st.date_input("게시일 *", value=date.today(), key=f"{prefix}mf_date")
+            f_url  = st.text_input("LinkedIn 게시물 URL *", key=f"{prefix}mf_url",
+                                   placeholder="https://www.linkedin.com/feed/update/…")
+            f_text = st.text_area("게시물 본문 (해시태그 자동 추출)",
+                                  key=f"{prefix}mf_text", height=100,
+                                  placeholder="#SCK #AI보안 게시물 내용을 붙여넣으면 해시태그가 자동 추출됩니다.")
+        with c2:
+            f_imp = st.number_input("노출수 *", min_value=0, key=f"{prefix}mf_imp")
+            f_clk = st.number_input("클릭", min_value=0, key=f"{prefix}mf_clk")
+            f_rea = st.number_input("추천(반응)", min_value=0, key=f"{prefix}mf_rea")
+            f_com = st.number_input("댓글", min_value=0, key=f"{prefix}mf_com")
+            f_rep = st.number_input("퍼감", min_value=0, key=f"{prefix}mf_rep")
+            f_eng = st.number_input("참여율 (%)", min_value=0.0, step=0.1, key=f"{prefix}mf_eng")
 
-    # ── A. 해시태그별 평균·중앙값 참여율 (bar)
-    rows_tag = []
-    for _, r in df_ch.iterrows():
-        tags = [t.strip() for t in str(r["hashtags"]).split(",") if t.strip()]
-        for tag in tags:
-            rows_tag.append({"hashtag": tag,
-                              "engage_rate": r["_engage_rate"],
-                              "impressions": r["impressions"]})
-    if rows_tag:
-        df_ht = pd.DataFrame(rows_tag)
-        ht_agg = df_ht.groupby("hashtag")["engage_rate"].agg(
-            평균=("mean"), 중앙값=("median"), 건수=("count")).reset_index()
-        ht_agg = ht_agg[ht_agg["건수"] >= 1].sort_values("평균", ascending=False).head(20)
-        fig_bar = go.Figure()
-        fig_bar.add_bar(x=ht_agg["hashtag"], y=ht_agg["평균"],   name="평균 참여율")
-        fig_bar.add_bar(x=ht_agg["hashtag"], y=ht_agg["중앙값"], name="중앙값 참여율")
-        fig_bar.update_layout(title="해시태그별 관찰 참여율 (상위 20개)",
-                              barmode="group", xaxis_title="해시태그",
-                              yaxis_title="참여율 (%)", height=400)
-        st.plotly_chart(fig_bar, use_container_width=True)
-        st.caption("참고용 상관관계 — 해시태그 단독 기여로 단정하지 않습니다.")
+        submitted = st.form_submit_button("등록", use_container_width=True, type="primary")
 
-    # ── B. 게시일 기준 참여율 추이
-    df_trend = df_ch.dropna(subset=["_engage_rate", "published_at"]).copy()
-    df_trend["published_at"] = pd.to_datetime(df_trend["published_at"], errors="coerce")
-    df_trend = df_trend.sort_values("published_at")
-    if len(df_trend) >= 2:
-        fig_trend = px.scatter(df_trend, x="published_at", y="_engage_rate",
-                               color="content_type", hover_data=["title"],
-                               title="게시일 기준 참여율 추이",
-                               labels={"published_at": "게시일", "_engage_rate": "참여율 (%)"},
-                               trendline="ols" if len(df_trend) >= 3 else None)
-        fig_trend.update_layout(height=350)
-        st.plotly_chart(fig_trend, use_container_width=True)
+        if submitted:
+            errs = []
+            if not f_url.strip():
+                errs.append("LinkedIn URL을 입력하세요.")
+            if f_imp <= 0:
+                errs.append("노출수는 1 이상이어야 합니다.")
+            if errs:
+                for e in errs:
+                    st.error(e)
+            else:
+                url = f_url.strip().rstrip("/")
+                text = f_text.strip()
+                hashtags = li.extract_hashtags(text)
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                pid = hashlib.md5(url.encode()).hexdigest()[:12]
 
-    # ── C. 노출수 vs 참여율 산점도
-    df_sc = df_ch.dropna(subset=["impressions", "_engage_rate"]).copy()
-    if len(df_sc) >= 2:
-        fig_sc = px.scatter(df_sc, x="impressions", y="_engage_rate",
-                            color="content_type", hover_data=["title"],
-                            title="노출수 vs 참여율",
-                            labels={"impressions": "노출수", "_engage_rate": "참여율 (%)"},
-                            size_max=15)
-        fig_sc.update_layout(height=350)
-        st.plotly_chart(fig_sc, use_container_width=True)
+                new_row = pd.DataFrame([{
+                    "post_id"        : pid,
+                    "url"            : url,
+                    "published_at"   : str(f_date),
+                    "title"          : text[:80],
+                    "text"           : text,
+                    "post_format"    : "",
+                    "campaign"       : "",
+                    "content_type"   : "",
+                    "hashtags"       : hashtags,
+                    "impressions"    : f_imp,
+                    "views"          : np.nan,
+                    "external_views" : np.nan,
+                    "clicks"         : f_clk if f_clk > 0 else np.nan,
+                    "ctr"            : (f_clk / f_imp) if f_imp > 0 and f_clk > 0 else np.nan,
+                    "reactions"      : f_rea if f_rea > 0 else np.nan,
+                    "comments"       : f_com if f_com > 0 else np.nan,
+                    "reposts"        : f_rep if f_rep > 0 else np.nan,
+                    "followers"      : np.nan,
+                    "engagement_rate": f_eng / 100 if f_eng > 0 else np.nan,
+                    "utm_content"    : "",
+                    "ga4_sessions"   : np.nan,
+                    "added_at"       : now_str,
+                    "updated_at"     : now_str,
+                }])
 
-    # ── D. 링크 클릭 vs GA4 유입 (데이터 있을 때만)
-    df_lnk = df_ch.dropna(subset=["link_clicks", "ga4_sessions"]).copy()
-    df_lnk = df_lnk[(df_lnk["link_clicks"] > 0) & (df_lnk["ga4_sessions"] > 0)]
-    if len(df_lnk) >= 1:
-        fig_lnk = go.Figure()
-        fig_lnk.add_bar(x=df_lnk["title"], y=df_lnk["link_clicks"],  name="링크 클릭 수")
-        fig_lnk.add_bar(x=df_lnk["title"], y=df_lnk["ga4_sessions"], name="GA4 대시보드 유입")
-        fig_lnk.update_layout(title="게시물별 링크 클릭 vs GA4 유입 세션",
-                              barmode="group", xaxis_title="게시물",
-                              yaxis_title="수", height=350)
-        st.plotly_chart(fig_lnk, use_container_width=True)
+                # 중복 URL 제거 후 추가
+                df_new = df[df["url"].astype(str).str.rstrip("/") != url].copy()
+                df_new = _cast(pd.concat([df_new, new_row], ignore_index=True))
+                ok = _save(df_new, f"feat: LinkedIn 게시물 수동 등록 — {url[:40]}")
+                st.session_state[ss_df] = df_new
+                if ok:
+                    st.success("✅ 등록 완료!")
+                else:
+                    st.warning("⚠️ 로컬 저장 완료 (GitHub 동기화 실패)")
+                st.rerun()
