@@ -255,6 +255,7 @@ LinkedIn 게시물 분석에서 확인한 수치를 입력하면,
                     st.session_state[_ss_key] = df_up
                     _save(df_up, "feat: LinkedIn 게시물 CSV 불러오기")
                     st.success("불러오기 완료!")
+                    st.session_state["_active_tab_idx"] = 4
                     st.rerun()
             except Exception as e:
                 st.error(f"CSV 오류: {e}")
@@ -407,6 +408,7 @@ def _render_form(df: pd.DataFrame, edit_row, prefix: str, ss_key: str, edit_key:
 
         if cancelled:
             st.session_state[edit_key] = None
+            st.session_state["_active_tab_idx"] = 4
             st.rerun()
 
         if submitted:
@@ -476,6 +478,7 @@ def _render_form(df: pd.DataFrame, edit_row, prefix: str, ss_key: str, edit_key:
                     st.success("✅ GitHub에 저장됐습니다.")
                 else:
                     st.warning("⚠️ 로컬 저장 완료 (GitHub 동기화 실패 — 토큰 확인 필요)")
+                st.session_state["_active_tab_idx"] = 4
                 st.rerun()
 
 
@@ -564,6 +567,7 @@ def _render_list(df_c: pd.DataFrame, df_raw: pd.DataFrame,
         with edit_col:
             if st.button("✏️ 수정", key=f"{prefix}btn_edit"):
                 st.session_state[edit_key] = sel_id
+                st.session_state["_active_tab_idx"] = 4
                 st.rerun()
         with del_col:
             if st.button("🗑️ 삭제", key=f"{prefix}btn_del"):
@@ -582,11 +586,13 @@ def _render_list(df_c: pd.DataFrame, df_raw: pd.DataFrame,
                 ok = _save(df_new, f"feat: LinkedIn 게시물 삭제 — {del_title[:30]}")
                 st.session_state[ss_key] = df_new
                 st.session_state[f"{prefix}del_confirm"] = None
+                st.session_state["_active_tab_idx"] = 4
                 st.success("삭제됐습니다.")
                 st.rerun()
         with c2:
             if st.button("취소", key=f"{prefix}del_cancel"):
                 st.session_state[f"{prefix}del_confirm"] = None
+                st.session_state["_active_tab_idx"] = 4
                 st.rerun()
 
 

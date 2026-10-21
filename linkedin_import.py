@@ -625,6 +625,9 @@ def _render_content_import(
         ok = on_save(df_merged)
         st.session_state[ss_key] = df_merged
 
+        # LinkedIn 탭(index 4)에 머물도록 표시
+        st.session_state["_active_tab_idx"] = 4
+
         if ok:
             st.success(
                 f"✅ 저장 완료 — 신규 {stats['new']}건 추가, {stats['updated']}건 업데이트"
