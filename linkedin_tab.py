@@ -183,6 +183,7 @@ def _build_utm(utm_content: str, promotion: str) -> str:
 
 # ── 탭 렌더링 (공개 함수) ─────────────────────────────────────
 
+@st.fragment
 def render(prefix: str = "li_") -> None:
     """dashboard.py 에서 `with tab5: linkedin_tab.render()` 로 호출합니다."""
 

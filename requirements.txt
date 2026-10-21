@@ -5,6 +5,7 @@ requests==2.34.2
 feedparser==6.0.12
 openpyxl==3.1.5
 xlrd==1.2.0
+lxml>=4.9.0
 python-dotenv==1.2.2
 pytrends==4.9.2
 urllib3==1.26.20

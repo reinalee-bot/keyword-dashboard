@@ -76,35 +76,74 @@ _CONTENT_SIGNATURE_COLS = [
 
 # ── 파일 읽기 ────────────────────────────────────────────────────
 
-def _read_file(uploaded) -> Optional[pd.DataFrame]:
-    """업로드된 파일을 DataFrame으로 읽기. 실패 시 None."""
+def _read_file(uploaded) -> tuple[Optional[pd.DataFrame], str]:
+    """
+    업로드된 파일을 DataFrame으로 읽기.
+    Returns: (DataFrame | None, error_message)
+
+    LinkedIn 내보내기는 .xls 확장자지만 실제로 HTML 테이블인 경우가 많음.
+    여러 방법을 순차적으로 시도.
+    """
     name = uploaded.name.lower()
     data = uploaded.read()
     uploaded.seek(0)
 
-    try:
-        if name.endswith(".csv"):
-            for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
-                try:
-                    return pd.read_csv(io.BytesIO(data), dtype=str, encoding=enc)
-                except (UnicodeDecodeError, Exception):
-                    continue
-            return None
+    errors: list[str] = []
 
-        elif name.endswith(".xlsx"):
-            return pd.read_excel(io.BytesIO(data), dtype=str, engine="openpyxl")
-
-        elif name.endswith(".xls"):
-            # xlrd 없는 환경에서는 openpyxl로 시도
+    # ── CSV
+    if name.endswith(".csv"):
+        for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
             try:
-                return pd.read_excel(io.BytesIO(data), dtype=str, engine="xlrd")
-            except Exception:
-                try:
-                    return pd.read_excel(io.BytesIO(data), dtype=str, engine="openpyxl")
-                except Exception:
-                    return None
-    except Exception:
-        return None
+                df = pd.read_csv(io.BytesIO(data), dtype=str, encoding=enc)
+                return df, ""
+            except UnicodeDecodeError:
+                continue
+            except Exception as e:
+                errors.append(f"csv/{enc}: {e}")
+        return None, " | ".join(errors) or "CSV 파싱 실패"
+
+    # ── XLSX
+    if name.endswith(".xlsx"):
+        try:
+            df = pd.read_excel(io.BytesIO(data), dtype=str, engine="openpyxl")
+            return df, ""
+        except Exception as e:
+            return None, f"xlsx: {e}"
+
+    # ── XLS (LinkedIn은 HTML 위장 .xls를 내보내는 경우가 많음)
+    if name.endswith(".xls"):
+        # 1) xlrd 시도 (진짜 바이너리 xls)
+        try:
+            df = pd.read_excel(io.BytesIO(data), dtype=str, engine="xlrd")
+            return df, ""
+        except Exception as e:
+            errors.append(f"xlrd: {e}")
+
+        # 2) HTML 테이블 파싱 (LinkedIn이 .xls로 저장한 HTML 위장 파일)
+        try:
+            tables = pd.read_html(io.BytesIO(data), encoding="utf-8", flavor="lxml")
+            if tables:
+                return tables[0].astype(str), ""
+        except Exception as e:
+            errors.append(f"html-utf8: {e}")
+
+        try:
+            tables = pd.read_html(io.BytesIO(data), encoding="cp949", flavor="lxml")
+            if tables:
+                return tables[0].astype(str), ""
+        except Exception as e:
+            errors.append(f"html-cp949: {e}")
+
+        # 3) openpyxl 최후 시도
+        try:
+            df = pd.read_excel(io.BytesIO(data), dtype=str, engine="openpyxl")
+            return df, ""
+        except Exception as e:
+            errors.append(f"openpyxl: {e}")
+
+        return None, " | ".join(errors)
+
+    return None, f"지원하지 않는 확장자: {name}"
 
 
 # ── 파일 유형 자동 감지 ──────────────────────────────────────────
@@ -418,10 +457,14 @@ UTM별 GA4 유입 수치를 추가한 경우에만 함께 비교할 수 있습�
 
         # 파일 읽기
         with st.spinner("파일 읽는 중..."):
-            df_raw = _read_file(uploaded)
+            df_raw, read_err = _read_file(uploaded)
 
         if df_raw is None or len(df_raw) == 0:
-            st.error("파일을 읽을 수 없습니다. xlsx/xls/csv 형식인지 확인하세요.")
+            st.error(
+                "파일을 읽을 수 없습니다. xlsx/xls/csv 형식인지 확인하세요.\n\n"
+                f"**오류 상세:** {read_err}" if read_err else
+                "파일을 읽을 수 없습니다. xlsx/xls/csv 형식인지 확인하세요."
+            )
             return
 
         # 파일 유형 결정
