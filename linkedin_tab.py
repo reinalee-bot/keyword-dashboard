@@ -33,6 +33,13 @@ _CONTENT_TYPES  = [
     "뉴스 공유", "인사이트", "행사", "채용·조직문화", "제품·솔루션", "기타"
 ]
 
+_DISCOVERY_PATHS = [
+    "키워드 대시보드 발굴",
+    "기존 상시 해시태그",
+    "직접 리서치",
+    "혼합",
+]
+
 _COLS = [
     "post_id",          # UUID-like: published_at + title 해시
     "published_at",     # 게시일 (YYYY-MM-DD)
@@ -41,6 +48,8 @@ _COLS = [
     "content_type",     # 콘텐츠 유형
     "campaign",         # 주요 주제/캠페인명
     "hashtags",         # 정규화된 해시태그, 쉼표 구분
+    "discovery_path",   # 키워드 발굴 경로
+    "source_keywords",  # 대시보드에서 발굴한 원본 키워드
     "impressions",      # 노출수
     "reactions",        # 반응 수
     "comments",         # 댓글 수
@@ -311,6 +320,18 @@ def _render_form(df: pd.DataFrame, edit_row, prefix: str, ss_key: str, edit_key:
                                       value=str(_get("hashtags")), key=f"{prefix}f_tags",
                                       placeholder="#AIAgent, #AgentOps, #MicrosoftCopilot",
                                       height=90)
+            f_discovery = st.selectbox(
+                "키워드 발굴 경로 *", _DISCOVERY_PATHS,
+                index=_DISCOVERY_PATHS.index(_get("discovery_path", _DISCOVERY_PATHS[0]))
+                if _get("discovery_path") in _DISCOVERY_PATHS else 0,
+                key=f"{prefix}f_disc",
+            )
+            f_src_kw = st.text_input(
+                "대시보드에서 발굴한 원본 키워드  (선택, 쉼표 구분)",
+                value=str(_get("source_keywords")), key=f"{prefix}f_srckw",
+                placeholder="AI Agent, Zero Trust, Copilot",
+                help="발굴 경로가 '키워드 대시보드 발굴' 또는 '혼합'일 때 입력하면 분석에 활용됩니다.",
+            )
         with col2:
             f_measured = st.date_input("수치 확인일 *",
                                        value=pd.to_datetime(_get("measured_at", date.today())).date()
@@ -386,13 +407,15 @@ def _render_form(df: pd.DataFrame, edit_row, prefix: str, ss_key: str, edit_key:
                     str(f_date), f_title.strip())
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 row = {
-                    "post_id"     : post_id,
-                    "published_at": str(f_date),
-                    "title"       : f_title.strip(),
-                    "url"         : f_url.strip(),
-                    "content_type": f_ct,
-                    "campaign"    : f_campaign.strip(),
-                    "hashtags"    : _normalize_hashtags(f_hashtags),
+                    "post_id"       : post_id,
+                    "published_at"  : str(f_date),
+                    "title"         : f_title.strip(),
+                    "url"           : f_url.strip(),
+                    "content_type"  : f_ct,
+                    "campaign"      : f_campaign.strip(),
+                    "hashtags"      : _normalize_hashtags(f_hashtags),
+                    "discovery_path": f_discovery,
+                    "source_keywords": f_src_kw.strip(),
                     "impressions" : f_imp,
                     "reactions"   : f_rea,
                     "comments"    : f_com,
@@ -481,6 +504,7 @@ def _render_list(df_c: pd.DataFrame, df_raw: pd.DataFrame,
             "게시일"      : r["published_at"],
             "제목"        : r["title"],
             "유형"        : r["content_type"],
+            "발굴 경로"   : r.get("discovery_path", ""),
             "노출수"      : _fmt(r["impressions"]),
             "참여 수"     : _fmt(r["_engage_total"]),
             "참여율"      : _fmt(r["_engage_rate"], pct=True),
@@ -579,6 +603,47 @@ def _render_kpi(df_c: pd.DataFrame, prefix: str):
     c8.metric("Paid·Boosted 포함", "예" if inc_paid else "아니오 (기본)")
 
     st.caption("Boosted 게시물은 기본적으로 제외됩니다. 위 체크박스로 포함할 수 있습니다.")
+
+    # ── 발굴 경로 비교 KPI
+    st.divider()
+    st.markdown("##### 🔍 키워드 발굴 경로별 관찰 비교")
+    st.caption(
+        "두 그룹의 평균·중앙값 참여율과 링크 클릭률을 비교합니다. "
+        "발굴 경로 외에도 콘텐츠 품질·시간 등 다양한 변수가 영향을 주므로 인과관계로 단정하지 마세요."
+    )
+
+    df_dash = df_base[df_base["discovery_path"] == "키워드 대시보드 발굴"]
+    df_other = df_base[df_base["discovery_path"] != "키워드 대시보드 발굴"]
+
+    n_dash  = len(df_dash)
+    n_other = len(df_other)
+
+    low_dash  = n_dash  < 3
+    low_other = n_other < 3
+
+    kc1, kc2 = st.columns(2)
+
+    with kc1:
+        badge = " ⚠️ 비교 표본 부족" if low_dash else ""
+        st.markdown(f"**대시보드 발굴{badge}**")
+        st.metric("게시물 수", f"{n_dash}건")
+        st.metric("평균 참여율",  _fmt(df_dash["_engage_rate"].mean(),  pct=True))
+        st.metric("중앙값 참여율", _fmt(df_dash["_engage_rate"].median(), pct=True))
+        st.metric("평균 링크 클릭률", _fmt(df_dash["_ctr"].mean(), pct=True))
+
+    with kc2:
+        badge2 = " ⚠️ 비교 표본 부족" if low_other else ""
+        st.markdown(f"**기타 발굴 경로{badge2}**")
+        st.metric("게시물 수", f"{n_other}건")
+        st.metric("평균 참여율",  _fmt(df_other["_engage_rate"].mean(),  pct=True))
+        st.metric("중앙값 참여율", _fmt(df_other["_engage_rate"].median(), pct=True))
+        st.metric("평균 링크 클릭률", _fmt(df_other["_ctr"].mean(), pct=True))
+
+    if low_dash or low_other:
+        st.info(
+            "⚠️ **비교 표본 부족:** 한 그룹의 게시물이 3건 미만입니다. "
+            "데이터가 더 쌓인 후 해석하세요."
+        )
 
 
 # ── 해시태그 분석 ─────────────────────────────────────────────
