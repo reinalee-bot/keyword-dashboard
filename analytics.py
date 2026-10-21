@@ -9,6 +9,10 @@ analytics.py — GA4 통합 모듈
 GA4 설정 필요 항목 (.streamlit/secrets.toml):
   GA4_MEASUREMENT_ID = "G-XXXXXXXXXX"
   GA4_API_SECRET     = "xxxxxxxxxxxx"  (Measurement Protocol API secret)
+
+디버그 모드:
+  ?ga_debug_mode=1 쿼리 파라미터 → Python이 감지 → JS에 직접 주입
+  (iframe 내부에서 window.location을 읽지 않음)
 """
 
 import os
@@ -19,7 +23,8 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-_MP_ENDPOINT = "https://www.google-analytics.com/mp/collect"
+_MP_ENDPOINT      = "https://www.google-analytics.com/mp/collect"
+_MP_DEBUG_ENDPOINT = "https://www.google-analytics.com/debug/mp/collect"
 
 
 # ── 설정 읽기 ─────────────────────────────────────────────
@@ -48,11 +53,23 @@ def _client_id() -> str:
     return st.session_state["_ga4_cid"]
 
 
+def _is_debug() -> bool:
+    """
+    Python 서버 측에서 ga_debug_mode 쿼리 파라미터를 판별합니다.
+    iframe 내부 JS에서 window.location을 읽지 않습니다.
+    """
+    try:
+        return st.query_params.get("ga_debug_mode", "") == "1"
+    except Exception:
+        return False
+
+
 # ── 브라우저 측: gtag.js 주입 ─────────────────────────────
 def inject_ga4_tag() -> None:
     """
     gtag.js를 Streamlit 부모 윈도우에 1회 주입합니다.
     Measurement ID가 없으면 아무것도 하지 않습니다.
+    debug 모드 여부는 Python이 st.query_params로 판별해 JS에 직접 삽입합니다.
     """
     if not _enabled():
         return
@@ -60,6 +77,9 @@ def inject_ga4_tag() -> None:
         return
 
     mid, _ = _cfg()
+    debug = _is_debug()
+    # Python bool → JS literal
+    js_debug = "true" if debug else "false"
 
     components.html(f"""
 <script>
@@ -68,20 +88,34 @@ def inject_ga4_tag() -> None:
   if (w._ga4_injected) return;
   w._ga4_injected = true;
 
+  var MID   = '{mid}';
+  var DEBUG = {js_debug};
+
   // dataLayer + gtag 초기화 (스크립트 로드 전에 미리 설정)
   w.dataLayer = w.dataLayer || [];
   w.gtag = function() {{ w.dataLayer.push(arguments); }};
+
+  if (DEBUG) {{
+    // DebugView 활성화: 'set' 호출을 config 이전에
+    w.gtag('set', 'debug_mode', true);
+  }}
+
   w.gtag('js', new Date());
-  w.gtag('config', '{mid}', {{
+  w.gtag('config', MID, {{
     'anonymize_ip': true,
-    'allow_enhanced_measurement': true
+    'allow_enhanced_measurement': true,
+    'send_page_view': true,
+    'debug_mode': DEBUG
   }});
 
   // gtag.js 스크립트 삽입
   var s = w.document.createElement('script');
   s.async = true;
-  s.src = 'https://www.googletagmanager.com/gtag/js?id={mid}';
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=' + MID;
   w.document.head.insertBefore(s, w.document.head.firstChild);
+
+  // debug 모드 플래그를 부모 창에 노출 (track_active_tab 등에서 참조)
+  w._ga4_debug = DEBUG;
 }})();
 </script>
 """, height=0, scrolling=False)
@@ -93,7 +127,7 @@ def inject_ga4_tag() -> None:
 def track_active_tab() -> None:
     """
     DOM에서 활성 탭 이름을 읽어 탭이 바뀔 때만 gtag 이벤트를 전송합니다.
-    Streamlit 재렌더 시에도 중복 발송되지 않습니다.
+    debug_mode 파라미터는 부모 창의 w._ga4_debug 플래그로 전달합니다.
     """
     if not _enabled():
         return
@@ -103,18 +137,18 @@ def track_active_tab() -> None:
 (function() {
   var w = window.parent;
   if (typeof w.gtag !== 'function') {
-    // gtag 아직 로드 안 됨 — 500ms 후 재시도
     setTimeout(arguments.callee, 500);
     return;
   }
   function check() {
     var el = w.document.querySelector('[role="tab"][aria-selected="true"]');
     if (!el) return;
-    // 이모지·공백 제거 후 순수 탭 이름 추출
     var name = el.innerText.trim().replace(/^[\\s\\S]{1,3}\\s/, '').trim();
     if (!name || name === w._ga4_last_tab) return;
     w._ga4_last_tab = name;
-    w.gtag('event', 'tab_view', { tab_name: name });
+    var params = { tab_name: name };
+    if (w._ga4_debug) params.debug_mode = true;
+    w.gtag('event', 'tab_view', params);
   }
   setTimeout(check, 80);
   setTimeout(check, 400);
@@ -127,17 +161,23 @@ def track_active_tab() -> None:
 def _mp(event_name: str, params: dict) -> None:
     """
     GA4 Measurement Protocol로 이벤트를 비동기 전송합니다.
+    debug 모드일 때는 /debug/mp/collect 엔드포인트로 보냅니다.
     API Secret이 없거나 전송에 실패해도 앱 동작에 영향을 주지 않습니다.
     """
     mid, sec = _cfg()
     if not mid or not sec:
         return
 
+    debug = _is_debug()
+    if debug:
+        params = dict(params, debug_mode=True)
+
+    endpoint = _MP_DEBUG_ENDPOINT if debug else _MP_ENDPOINT
     payload = {
         "client_id": _client_id(),
         "events": [{"name": event_name, "params": params}],
     }
-    url = f"{_MP_ENDPOINT}?measurement_id={mid}&api_secret={sec}"
+    url = f"{endpoint}?measurement_id={mid}&api_secret={sec}"
 
     def _post():
         try:
