@@ -101,23 +101,22 @@ def _fetch_batch(keywords: list[str], cid: str, akey: str, skey: str) -> dict:
     )
     resp.raise_for_status()
 
+    def _parse(v) -> int:
+        if isinstance(v, (int, float)):
+            return int(v)
+        s = str(v).strip()
+        if s in ("< 10", "<10", "미미"):
+            return 5
+        try:
+            return int(s.replace(",", ""))
+        except ValueError:
+            return 0
+
     result: dict = {}
     for item in resp.json().get("keywordList", []):
         kw  = item.get("relKeyword", "")
         pc  = item.get("monthlyPcQcCnt",     0)
         mob = item.get("monthlyMobileQcCnt", 0)
-
-        def _parse(v) -> int:
-            if isinstance(v, (int, float)):
-                return int(v)
-            s = str(v).strip()
-            if s in ("< 10", "<10", "미미"):
-                return 5
-            try:
-                return int(s.replace(",", ""))
-            except ValueError:
-                return 0
-
         result[kw] = {"pc": _parse(pc), "mobile": _parse(mob)}
 
     return result

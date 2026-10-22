@@ -1235,10 +1235,25 @@ tab1,tab2,tab3,tab4,tab5,tab6 = st.tabs([
 ])
 
 # 탭 상태 복원: rerun 후에도 사용자가 마지막으로 선택한 탭 유지
-_restore_idx = st.session_state.get("_active_tab_idx", 0)
+# URL query param (?tab=N) 을 source of truth로 사용 — sessionStorage는 fallback
+try:
+    _restore_idx = int(st.query_params.get("tab", "0"))
+    if _restore_idx < 0 or _restore_idx > 5:
+        _restore_idx = 0
+except (ValueError, TypeError):
+    _restore_idx = 0
+
 _components.html(f"""<script>
 (function() {{
   var TARGET = {_restore_idx};
+  function _setTabParam(i) {{
+    try {{
+      var url = new URL(window.parent.location.href);
+      url.searchParams.set('tab', String(i));
+      window.parent.history.replaceState({{}}, '', url.toString());
+      sessionStorage.setItem('_kd_tab', String(i));
+    }} catch(e) {{}}
+  }}
   function _restore() {{
     var tabs = window.parent.document.querySelectorAll('button[role="tab"]');
     if (!tabs.length) return;
@@ -1247,9 +1262,7 @@ _components.html(f"""<script>
     }}
     tabs.forEach(function(btn, i) {{
       btn.removeEventListener('click', btn._trackClick || function(){{}});
-      btn._trackClick = function() {{
-        try {{ sessionStorage.setItem('_kd_tab', String(i)); }} catch(e) {{}}
-      }};
+      btn._trackClick = function() {{ _setTabParam(i); }};
       btn.addEventListener('click', btn._trackClick);
     }});
   }}
