@@ -4,6 +4,88 @@ SCK·STK 커뮤니케이션팀의 키워드 트렌드 KPI 대시보드입니다.
 
 ---
 
+## 기능 변경 이력
+
+### 1단계 — 기본 트렌드 추이 (기존)
+- 추적 키워드별 네이버·구글 트렌드 시계열 조회
+- 주간/월간 KPI 요약, 스파크라인
+
+### 2단계 — 관련 검색어 수집 (기존)
+- Google Trends `related_queries()` 호출 → Top 10 / Rising 10
+- 임시 키워드 비교 시 `related_dict` 반환
+
+### 3단계 — 경고 배지 (2026-10-22)
+- **뉴스성 급등**: 최근 7일 평균 ÷ 4주 평균 ≥ `spike_ratio` (기본 2.5배)
+- **동음이의 혼재**: 영문 단일 단어 패턴 감지
+- **검색 관심 거의 없음**: 90일 평균 정규화 관심도 < `low_interest` (기본 5)
+- 모든 배지에 hover 툴팁 포함
+
+### 4단계 — 구글 트렌드 정규화 + 키워드 후보 풀 (2026-10-22)
+- 앵커 키워드(기본: `생성형AI`) 기준 정규화 관심도(`ratio_norm`) 산출
+- 세션 내 키워드 후보 풀 누적 (CSV 다운로드 지원)
+- `collector.py::fetch_trends_temp()` 추가 — CSV 저장 없는 임시 수집
+
+### 5단계 — 해시태그 추천 (2026-10-22)
+위치: 추이 분석·발굴 탭 > 해시태그 추천 섹션
+
+- **입력**: 주제 키워드 1~3개 + 채널 선택(LinkedIn / Instagram)
+- **후보 수집**: `fetch_trends_temp` 관련 검색어(top/rising)에서 자동 추출
+- **후보 분류**: 넓은 노출용 / 타깃 표현용 / 브랜드·서비스명
+- **경고 배지**: 3단계 배지 연동, 기본 제외(토글로 포함 가능)
+- **추천 조합**:
+  - LinkedIn: 해시태그 2~4개 + 본문 삽입 키워드 1~2개
+  - Instagram: 기본 7개(슬라이더 3~15), 권장 3~5개 기준 안내
+- **Instagram 해시태그 수 근거**: Meta 공식(2022~현재) 3~5개 / 업계 실무(Later, Hootsuite 2023~2024) 5~10개
+- 복사용 text_area 제공
+
+### 6단계 — 해시태그-게시물 성과 연결 (2026-10-22)
+#### LinkedIn (`linkedin_tab.py`)
+- `hashtags` 컬럼은 기존 스키마에 이미 존재 — 기존 데이터 호환
+- 게시물 목록 탭 > **해시태그 수동 편집** expander 추가
+- 게시물 목록 탭 > **해시태그 일괄 업데이트 (CSV)** expander 추가
+  - CSV 형식: `post_id, hashtags` (쉼표 구분)
+- `load_posts()` 공개 함수 추가
+
+#### Instagram (`instagram_tab.py`)
+- `_COLS`에 `hashtags` 추가 (기존 데이터 자동 호환 — `_cast()` 가 빈 값으로 채움)
+- CSV 업로드 시 `Description` 컬럼에서 `#태그` 자동 추출 → `hashtags` 컬럼 저장
+- 게시물 목록 탭 > **해시태그 수동 편집** expander 추가
+- 업로드 섹션 > **해시태그 일괄 업데이트 (CSV)** expander 추가
+- **서브탭 신설**: `#️⃣ 해시태그 분석` — 해시태그별 사용 횟수·평균 도달·평균 반응률·평균 저장
+- `load_posts()` 공개 함수 추가
+
+#### dashboard.py (해시태그 추천 연동)
+- `_get_hashtag_perf_map()`: LinkedIn + Instagram 게시물 로드 → 태그별 실적 dict (5분 캐시)
+- `_fmt_perf()`: 채널별 실적 문자열 포맷 (`"LI 3회 / 중앙 노출 1,200"` 또는 `"미사용"`)
+- 해시태그 추천 후보 표에 **우리 계정 실적** 열 추가
+
+---
+
+## LinkedIn / Instagram 공식 API 조사 결과
+
+> **구현하지 않음** — 아래는 향후 자동 수집 도입 시 참고용 조사 결과입니다.
+
+### LinkedIn Posts API
+| 항목 | 내용 |
+|---|---|
+| 필요 권한 | `r_organization_social`, `r_1st_connections_size` |
+| 엔드포인트 | `GET /posts?author=urn:li:organization:{id}&count=100` |
+| 주요 제약 | 조직 계정 관리자 OAuth2 앱 등록 필요, 액세스 토큰 60일 만료, 재발급 자동화 필요 |
+| 노출·클릭 | `r_organization_social_feed` scope 추가 시 impressions/clicks 조회 가능 |
+| 결론 | 앱 등록(LinkedIn 개발자 포털) + 토큰 관리 인프라 필요. 수동 Excel 내보내기 대비 초기 구축 비용 큼 |
+
+### Instagram Graph API
+| 항목 | 내용 |
+|---|---|
+| 전제 조건 | Instagram **비즈니스 또는 크리에이터 계정** 전환 + Facebook 페이지 연동 필수 |
+| 필요 권한 | `instagram_basic`, `instagram_manage_insights`, `pages_read_engagement` |
+| 엔드포인트 | `GET /{ig-user-id}/media?fields=id,caption,like_count,reach,impressions,saves` |
+| 주요 제약 | `reach`/`impressions` 히스토리는 최대 **93일치**만 조회, 이전 데이터는 API로 소급 불가 |
+| 토큰 | 장기 액세스 토큰(60일) + 자동 갱신 로직 필요 |
+| 결론 | 비즈니스 계정 + Facebook 페이지 연동이 이미 돼 있으면 구현 가능. `reach` 93일 제한으로 현행 수동 CSV 스냅샷 누적 방식이 장기 데이터 보존에 유리 |
+
+---
+
 ## 환경변수 / Secrets 설정
 
 `.streamlit/secrets.toml` 또는 Streamlit Cloud 앱 설정 > Secrets에 아래 항목을 입력합니다.  

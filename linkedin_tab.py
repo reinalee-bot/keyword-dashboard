@@ -681,6 +681,70 @@ def _render_list(df: pd.DataFrame, prefix: str) -> None:
                        file_name="linkedin_posts.csv", mime="text/csv",
                        key=f"{prefix}csv_dl")
 
+    # ── 해시태그 인라인 편집 ──────────────────────────
+    with st.expander("✏️ 해시태그 수동 편집"):
+        st.caption("게시물을 선택해 해시태그를 직접 입력하거나 수정합니다. 쉼표 구분(예: #AI, #생성형AI)")
+        _li_df_full = st.session_state.get(f"{prefix}df", pd.DataFrame())
+        if _li_df_full.empty:
+            st.info("저장된 게시물 데이터가 없습니다.")
+        else:
+            _li_opts = {
+                f"{str(r.get('published_at',''))[:10]} · {str(r.get('title',''))[:35]}": idx
+                for idx, r in _li_df_full.iterrows()
+            }
+            _li_sel = st.selectbox("게시물 선택", list(_li_opts.keys()), key=f"{prefix}ht_edit_sel")
+            _li_idx = _li_opts[_li_sel]
+            _li_cur = str(_li_df_full.at[_li_idx, "hashtags"] or "")
+            _li_new = st.text_input("해시태그 (쉼표 구분)", value=_li_cur, key=f"{prefix}ht_edit_val",
+                                     placeholder="#생성형AI, #AI, #ChatGPT")
+            if st.button("💾 저장", key=f"{prefix}ht_edit_save", type="primary"):
+                _li_df_full.at[_li_idx, "hashtags"] = _li_new.strip()
+                with st.spinner("저장 중…"):
+                    ok = _save(_li_df_full, "feat: LinkedIn 해시태그 수동 편집")
+                st.session_state[f"{prefix}df"] = _li_df_full.copy()
+                if ok:
+                    st.success("저장됐습니다.")
+                else:
+                    st.warning("로컬 저장 완료 (GitHub 동기화 실패)")
+
+    # ── 해시태그 CSV 일괄 업데이트 ──────────────────
+    with st.expander("🏷️ 해시태그 일괄 업데이트 (CSV)", expanded=False):
+        st.caption(
+            "컬럼: `post_id`, `hashtags` — post_id가 일치하는 행의 해시태그를 업데이트합니다. "
+            "없는 post_id는 건너뜁니다."
+        )
+        _li_ht_up = st.file_uploader(
+            "해시태그 CSV", type=["csv"],
+            key=f"{prefix}ht_bulk_upload", label_visibility="collapsed",
+        )
+        if _li_ht_up:
+            try:
+                _li_ht_raw = pd.read_csv(_li_ht_up, dtype=str)
+            except Exception as e:
+                st.error(f"CSV 읽기 오류: {e}")
+                _li_ht_raw = None
+            if _li_ht_raw is not None:
+                if "post_id" not in _li_ht_raw.columns or "hashtags" not in _li_ht_raw.columns:
+                    st.error("CSV에 `post_id`와 `hashtags` 컬럼이 필요합니다.")
+                else:
+                    _li_ht_map = dict(zip(_li_ht_raw["post_id"].astype(str), _li_ht_raw["hashtags"].astype(str)))
+                    st.caption(f"{len(_li_ht_map)}개 행 감지")
+                    if st.button("✅ 적용", key=f"{prefix}ht_bulk_apply", type="primary"):
+                        _li_df_b = st.session_state.get(f"{prefix}df", pd.DataFrame()).copy()
+                        _li_matched = 0
+                        for _bi, _br in _li_df_b.iterrows():
+                            _bpid = str(_br.get("post_id", ""))
+                            if _bpid in _li_ht_map:
+                                _li_df_b.at[_bi, "hashtags"] = _li_ht_map[_bpid]
+                                _li_matched += 1
+                        with st.spinner("저장 중…"):
+                            ok2 = _save(_li_df_b, f"feat: LinkedIn 해시태그 일괄 업데이트 {_li_matched}건")
+                        st.session_state[f"{prefix}df"] = _li_df_b
+                        if ok2:
+                            st.success(f"✅ {_li_matched}건 업데이트 완료")
+                        else:
+                            st.warning(f"⚠️ 로컬 저장 완료 — {_li_matched}건 (GitHub 동기화 실패)")
+
 
 # ══════════════════════════════════════════════════════════════════════
 # 해시태그 관찰 탭
@@ -1027,3 +1091,12 @@ def _render_manual_form(df: pd.DataFrame, prefix: str, ss_df: str) -> None:
                 else:
                     st.warning("⚠️ 로컬 저장 완료 (GitHub 동기화 실패)")
                 st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 공개 데이터 접근
+# ══════════════════════════════════════════════════════════════════════
+
+def load_posts() -> pd.DataFrame:
+    """dashboard.py 등 외부에서 LinkedIn 게시물 데이터를 읽을 때 사용."""
+    return _load()

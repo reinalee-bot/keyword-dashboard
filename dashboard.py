@@ -921,6 +921,81 @@ def _hashtag_format(kw: str) -> str:
     return "#" + kw.replace(" ", "").replace("-", "")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_hashtag_perf_map() -> dict:
+    """
+    LinkedIn + Instagram 게시물에서 해시태그별 실적 dict를 반환한다.
+    key: 소문자 태그 (# 없이), value: {"li_uses", "li_med_imp", "ig_uses", "ig_med_reach"}
+    결과는 5분 캐시 (게시물 데이터 수시 편집 반영).
+    """
+    import linkedin_tab as _li_mod
+    import instagram_tab as _ig_mod
+
+    result: dict = {}
+
+    def _parse_tags(val: str) -> list:
+        return [t.strip().lstrip("#").lower() for t in re.split(r"[,\s]+", val or "") if t.strip().lstrip("#")]
+
+    # LinkedIn
+    try:
+        li_df = _li_mod.load_posts()
+        for _, row in li_df.iterrows():
+            for tag in _parse_tags(str(row.get("hashtags", "") or "")):
+                e = result.setdefault(tag, {"li_uses": 0, "li_imp": [], "ig_uses": 0, "ig_reach": []})
+                e["li_uses"] += 1
+                imp = row.get("impressions")
+                if imp is not None and not (isinstance(imp, float) and np.isnan(imp)):
+                    e["li_imp"].append(float(imp))
+    except Exception:
+        pass
+
+    # Instagram
+    try:
+        ig_df = _ig_mod.load_posts()
+        for _, row in ig_df.iterrows():
+            ht_val = str(row.get("hashtags", "") or "")
+            if not ht_val:
+                import re as _re2
+                ht_val = ", ".join(f"#{t}" for t in _re2.findall(r'#(\w+)', str(row.get("caption", "") or "")))
+            for tag in _parse_tags(ht_val):
+                e = result.setdefault(tag, {"li_uses": 0, "li_imp": [], "ig_uses": 0, "ig_reach": []})
+                e["ig_uses"] += 1
+                reach = row.get("reach")
+                if reach is not None and not (isinstance(reach, float) and np.isnan(reach)):
+                    e["ig_reach"].append(float(reach))
+    except Exception:
+        pass
+
+    # 중앙값 계산
+    for tag, e in result.items():
+        e["li_med_imp"]   = float(np.median(e["li_imp"]))   if e["li_imp"]   else float("nan")
+        e["ig_med_reach"] = float(np.median(e["ig_reach"])) if e["ig_reach"] else float("nan")
+
+    return result
+
+
+def _fmt_perf(tag: str, channel: str, perf_map: dict) -> str:
+    """해시태그 추천표 '우리 계정 실적' 셀 문자열 반환."""
+    key = tag.lstrip("#").lower()
+    e   = perf_map.get(key)
+    if e is None:
+        return "미사용"
+    if channel == "LinkedIn":
+        u = e.get("li_uses", 0)
+        m = e.get("li_med_imp", float("nan"))
+        if u == 0:
+            return "미사용"
+        med_str = f"중앙 노출 {int(m):,}" if not np.isnan(m) else ""
+        return f"LI {u}회" + (f" / {med_str}" if med_str else "")
+    else:
+        u = e.get("ig_uses", 0)
+        m = e.get("ig_med_reach", float("nan"))
+        if u == 0:
+            return "미사용"
+        med_str = f"중앙 도달 {int(m):,}" if not np.isnan(m) else ""
+        return f"IG {u}회" + (f" / {med_str}" if med_str else "")
+
+
 def _build_hashtag_combo(
     candidates: list,          # [{"kw", "value", "trend", "badges", "category"}]
     channel: str,              # "LinkedIn" | "Instagram"
@@ -1899,6 +1974,13 @@ with tab2:
 
             # ── 후보 표 ──────────────────────────────
             if _ht_candidates:
+                try:
+                    _perf_map = _get_hashtag_perf_map()
+                except Exception:
+                    _perf_map = {}
+                for _hc in _ht_candidates:
+                    _hc["우리 계정 실적"] = _fmt_perf(_hc["kw"], _ht_ch_r, _perf_map)
+
                 _ht_df_show = pd.DataFrame(_ht_candidates).rename(columns={
                     "kw":       "키워드",
                     "value":    "관심도",
@@ -1912,12 +1994,13 @@ with tab2:
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "키워드":  st.column_config.TextColumn(width="medium"),
-                        "관심도":  st.column_config.NumberColumn(format="%.1f", width="small"),
-                        "추세":    st.column_config.TextColumn(width="small"),
-                        "경고":    st.column_config.TextColumn(width="large"),
-                        "용도":    st.column_config.TextColumn(width="medium"),
-                        "출처":    st.column_config.TextColumn(width="medium"),
+                        "키워드":       st.column_config.TextColumn(width="medium"),
+                        "관심도":       st.column_config.NumberColumn(format="%.1f", width="small"),
+                        "추세":         st.column_config.TextColumn(width="small"),
+                        "경고":         st.column_config.TextColumn(width="large"),
+                        "용도":         st.column_config.TextColumn(width="medium"),
+                        "우리 계정 실적": st.column_config.TextColumn(width="medium"),
+                        "출처":         st.column_config.TextColumn(width="medium"),
                     },
                 )
 

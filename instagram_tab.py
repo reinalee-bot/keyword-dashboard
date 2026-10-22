@@ -34,7 +34,7 @@ _LOCAL_CSV = os.path.join(os.path.dirname(__file__), _CSV_PATH)
 
 _COLS = [
     "snapshot_id", "post_id", "account_username", "permalink",
-    "caption", "post_type", "duration_sec",
+    "caption", "hashtags", "post_type", "duration_sec",
     "published_at", "metric_period", "snapshot_date",
     "views", "reach", "likes", "shares", "follows", "comments", "saves",
     "added_at",
@@ -93,6 +93,15 @@ _IG_REQUIRED_COLS = {"Post ID", "Description", "Permalink", "Post type", "Reach"
 
 def is_instagram_csv(df_raw: pd.DataFrame) -> bool:
     return _IG_REQUIRED_COLS.issubset(set(df_raw.columns))
+
+
+def _extract_hashtags(caption: str) -> str:
+    """캡션 텍스트에서 #태그를 추출해 쉼표 구분 문자열로 반환. 중복 제거, 순서 유지."""
+    tags = re.findall(r'#(\w+)', caption or "")
+    seen: dict = {}
+    for t in tags:
+        seen.setdefault(t, None)
+    return ", ".join(f"#{t}" for t in seen)
 
 
 def _extract_snapshot_date(filename: str) -> str:
@@ -155,6 +164,7 @@ def parse_instagram_csv(df_raw: pd.DataFrame, snapshot_date: str) -> list[dict]:
             "account_username": _s("Account username", raw),
             "permalink"     : permalink,
             "caption"       : _s("Description", raw)[:500],
+            "hashtags"      : _extract_hashtags(_s("Description", raw)),
             "post_type"     : post_type_kr,
             "duration_sec"  : _n("Duration (sec)", raw),
             "published_at"  : published_at,
@@ -256,13 +266,15 @@ def render(prefix: str = "ig_") -> None:
     df_latest = _get_latest_snapshot(df)
     df_c      = _enrich(df_latest)
 
-    sub1, sub2, sub3 = st.tabs(["📊 성과 요약", "📋 게시물 목록", "🎞️ 포맷별 비교"])
+    sub1, sub2, sub3, sub4 = st.tabs(["📊 성과 요약", "📋 게시물 목록", "🎞️ 포맷별 비교", "#️⃣ 해시태그 분석"])
     with sub1:
         _render_summary(df_c, df, prefix)
     with sub2:
         _render_list(df_c, prefix)
     with sub3:
         _render_format_compare(df_c, prefix)
+    with sub4:
+        _render_hashtags_ig(df_c, prefix)
 
 
 def _get_latest_snapshot(df: pd.DataFrame) -> pd.DataFrame:
@@ -383,6 +395,44 @@ Instagram 프로페셔널 계정 &gt; 인사이트 &gt; 게시물 내보내기(.
             else:
                 st.warning(f"⚠️ 로컬 저장 완료 (GitHub 동기화 실패) — 신규 {stats['new']}건")
             st.rerun()
+
+    # ── 해시태그 일괄 업데이트 ────────────────────────────────────────
+    with st.expander("🏷️ 해시태그 일괄 업데이트 (CSV)", expanded=False):
+        st.caption(
+            "컬럼: `post_id`, `hashtags` — post_id가 일치하는 행의 해시태그를 업데이트합니다. "
+            "없는 post_id는 건너뜁니다."
+        )
+        _ht_upload = st.file_uploader(
+            "해시태그 CSV", type=["csv"],
+            key=f"{prefix}ht_bulk_upload", label_visibility="collapsed",
+        )
+        if _ht_upload:
+            try:
+                _ht_raw = pd.read_csv(_ht_upload, dtype=str)
+            except Exception as e:
+                st.error(f"CSV 읽기 오류: {e}")
+                _ht_raw = None
+            if _ht_raw is not None:
+                if "post_id" not in _ht_raw.columns or "hashtags" not in _ht_raw.columns:
+                    st.error("CSV에 `post_id`와 `hashtags` 컬럼이 필요합니다.")
+                else:
+                    _ht_map = dict(zip(_ht_raw["post_id"].astype(str), _ht_raw["hashtags"].astype(str)))
+                    st.caption(f"{len(_ht_map)}개 행 감지")
+                    if st.button("✅ 적용", key=f"{prefix}ht_bulk_apply", type="primary"):
+                        _ig_df_bulk = st.session_state.get(ss_df, pd.DataFrame()).copy()
+                        _matched = 0
+                        for _i, _row in _ig_df_bulk.iterrows():
+                            _pid = str(_row.get("post_id", ""))
+                            if _pid in _ht_map:
+                                _ig_df_bulk.at[_i, "hashtags"] = _ht_map[_pid]
+                                _matched += 1
+                        with st.spinner("저장 중…"):
+                            ok2 = _save(_ig_df_bulk, f"feat: Instagram 해시태그 일괄 업데이트 {_matched}건")
+                        st.session_state[ss_df] = _ig_df_bulk
+                        if ok2:
+                            st.success(f"✅ {_matched}건 업데이트 완료")
+                        else:
+                            st.warning(f"⚠️ 로컬 저장 완료 — {_matched}건 (GitHub 동기화 실패)")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -676,6 +726,7 @@ def _render_list(df: pd.DataFrame, prefix: str) -> None:
             "게시일"   : str(r["_pub"].date()) if pd.notna(r["_pub"]) else "-",
             "포맷"     : r["post_type"] or "-",
             "본문 요약": str(r["caption"] or "")[:50],
+            "해시태그" : str(r.get("hashtags", "") or ""),
             "조회"     : _fmt(r["views"]),
             "도달"     : _fmt(r["reach"]),
             "좋아요"   : _fmt(r["likes"]),
@@ -692,9 +743,36 @@ def _render_list(df: pd.DataFrame, prefix: str) -> None:
         column_config={
             "원문"     : st.column_config.LinkColumn("원문", display_text="링크"),
             "본문 요약": st.column_config.TextColumn("본문 요약", width="large"),
+            "해시태그" : st.column_config.TextColumn("해시태그", width="medium"),
         },
     )
     st.caption(f"총 {len(df_f)}건 (누적 기간: Lifetime)")
+
+    # ── 해시태그 인라인 편집 ──────────────────────────
+    with st.expander("✏️ 해시태그 수동 편집"):
+        st.caption("게시물을 선택해 해시태그를 직접 입력하거나 수정합니다. 쉼표 구분(예: #AI, #인공지능)")
+        _ig_df_full = st.session_state.get(f"{prefix}df", pd.DataFrame())
+        if _ig_df_full.empty:
+            st.info("저장된 게시물 데이터가 없습니다.")
+        else:
+            _ig_opts = {
+                f"{str(r.get('published_at',''))[:10]} · {str(r.get('caption',''))[:30]}": idx
+                for idx, r in _ig_df_full.iterrows()
+            }
+            _sel_label = st.selectbox("게시물 선택", list(_ig_opts.keys()), key=f"{prefix}ht_edit_sel")
+            _sel_idx = _ig_opts[_sel_label]
+            _cur_ht = str(_ig_df_full.at[_sel_idx, "hashtags"] or "")
+            _new_ht = st.text_input("해시태그 (쉼표 구분)", value=_cur_ht, key=f"{prefix}ht_edit_val",
+                                     placeholder="#AI, #인공지능, #ChatGPT")
+            if st.button("💾 저장", key=f"{prefix}ht_edit_save", type="primary"):
+                _ig_df_full.at[_sel_idx, "hashtags"] = _new_ht.strip()
+                with st.spinner("저장 중…"):
+                    ok = _save(_ig_df_full, "feat: Instagram 해시태그 수동 편집")
+                st.session_state[f"{prefix}df"] = _ig_df_full.copy()
+                if ok:
+                    st.success("저장됐습니다.")
+                else:
+                    st.warning("로컬 저장 완료 (GitHub 동기화 실패)")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -769,3 +847,94 @@ def _render_format_compare(df: pd.DataFrame, prefix: str) -> None:
             f"⚠️ 표본 부족 (3건 미만): {', '.join(names)} — "
             "현재는 참고용 관찰치입니다. 게시물이 쌓이면 재평가하세요."
         )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 해시태그 분석 탭
+# ══════════════════════════════════════════════════════════════════════
+
+def _render_hashtags_ig(df: pd.DataFrame, prefix: str) -> None:
+    st.markdown("#### #️⃣ 해시태그 분석")
+
+    st.warning(
+        "해시태그별 결과는 게시 시점·소재·포맷 등의 영향을 함께 받는 **관찰치**이며, "
+        "해시태그 단독 효과나 인과관계를 의미하지 않습니다.",
+        icon="⚠️",
+    )
+
+    records: list[dict] = []
+    tag_posts: dict[str, list] = {}
+
+    for i, row in df.iterrows():
+        ht_val = str(row.get("hashtags", "") or "")
+        if not ht_val:
+            # caption에서 실시간 추출 (hashtags 컬럼이 빈 경우)
+            ht_val = _extract_hashtags(str(row.get("caption", "") or ""))
+        tags = [t.strip().lstrip("#") for t in re.split(r"[,\s]+", ht_val) if t.strip().lstrip("#")]
+        for tag in tags:
+            tag_posts.setdefault(tag, []).append(i)
+
+    for tag, idxs in tag_posts.items():
+        sub = df.loc[idxs]
+        n   = len(sub)
+        records.append({
+            "해시태그"       : f"#{tag}",
+            "사용 횟수"      : n,
+            "평균 도달"      : round(float(sub["reach"].mean()), 0) if sub["reach"].notna().any() else float("nan"),
+            "평균 반응률(%)" : round(float(sub["_eng_rate"].mean()), 1) if sub["_eng_rate"].notna().any() else float("nan"),
+            "평균 저장"      : round(float(sub["saves"].mean()), 0) if sub["saves"].notna().any() else float("nan"),
+            "_n"             : n,
+        })
+
+    if not records:
+        st.info(
+            "해시태그 데이터가 없습니다. "
+            "CSV 업로드 시 캡션에서 자동 추출되거나, '게시물 목록' 탭에서 직접 입력할 수 있습니다."
+        )
+        return
+
+    df_ht = pd.DataFrame(records).sort_values("평균 도달", ascending=False)
+    df_rank = df_ht[df_ht["_n"] >= 2].copy()
+    df_low  = df_ht[df_ht["_n"] < 2].copy()
+
+    if len(df_rank) > 0:
+        st.markdown("**✅ 성과 비교 (2건 이상)**")
+        st.dataframe(
+            df_rank[["해시태그", "사용 횟수", "평균 도달", "평균 반응률(%)", "평균 저장"]],
+            use_container_width=True, hide_index=True,
+            column_config={
+                "평균 도달":       st.column_config.NumberColumn(format="%,.0f"),
+                "평균 반응률(%)":  st.column_config.NumberColumn(format="%.1f"),
+                "평균 저장":       st.column_config.NumberColumn(format="%,.0f"),
+            },
+        )
+        top10 = df_rank[~df_rank["해시태그"].str.contains("SCK", case=False)].head(10)
+        if len(top10) > 0:
+            import plotly.express as _px_ig
+            fig = _px_ig.bar(
+                top10.sort_values("평균 반응률(%)"),
+                x="평균 반응률(%)", y="해시태그",
+                orientation="h", text="사용 횟수",
+                title="해시태그별 평균 반응률 (상위 10개)",
+                color_discrete_sequence=["#F97316"],
+                height=max(220, len(top10) * 35),
+            )
+            fig.update_traces(textposition="outside")
+            fig.update_layout(margin=dict(l=0, r=20, t=40, b=0))
+            st.plotly_chart(fig, use_container_width=True)
+
+    if len(df_low) > 0:
+        with st.expander(f"🔍 표본 부족 ({len(df_low)}개 태그, 2건 미만)"):
+            st.dataframe(
+                df_low[["해시태그", "사용 횟수", "평균 도달"]],
+                use_container_width=True, hide_index=True,
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 공개 데이터 접근
+# ══════════════════════════════════════════════════════════════════════
+
+def load_posts() -> pd.DataFrame:
+    """dashboard.py 등 외부에서 Instagram 게시물 데이터를 읽을 때 사용."""
+    return _load()
