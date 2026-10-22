@@ -38,6 +38,15 @@ SCK·STK 커뮤니케이션팀의 키워드 트렌드 KPI 대시보드입니다.
 - **Instagram 해시태그 수 근거**: Meta 공식(2022~현재) 3~5개 / 업계 실무(Later, Hootsuite 2023~2024) 5~10개
 - 복사용 text_area 제공
 
+### 7단계 — 네이버 검색광고 API 월간 검색수 (2026-10-22)
+위치: 추이 분석·발굴 탭 > 해시태그 추천 후보 표 / 임시 키워드 비교 카드
+
+- **`naver_searchad.py`** 신규 모듈: HMAC-SHA256 서명, 배치 조회(최대 5개), 24h 캐시
+- `is_configured()`: Secrets 3종(`NAVER_SEARCHAD_CUSTOMER_ID/API_KEY/SECRET_KEY`) 여부 확인
+- **해시태그 추천 후보 표**: `네이버 월간 검색수` 컬럼 추가 (Secrets 미설정 시 컬럼 숨김)
+- **임시 키워드 비교 카드**: `네이버 월간 검색: N,NNN` 행 추가 (Secrets 미설정 시 숨김)
+- `"< 10"` 응답 → 5로 처리(하한 추정); API 오류 시 해당 키워드만 `—` 표기로 graceful degradation
+
 ### 6단계 — 해시태그-게시물 성과 연결 (2026-10-22)
 #### LinkedIn (`linkedin_tab.py`)
 - `hashtags` 컬럼은 기존 스키마에 이미 존재 — 기존 데이터 호환
@@ -99,6 +108,9 @@ SCK·STK 커뮤니케이션팀의 키워드 트렌드 KPI 대시보드입니다.
 | `GA4_API_SECRET` | Measurement Protocol API 보안 비밀 | 서버 측 이벤트 사용 시 |
 | `NAVER_CLIENT_ID` | 네이버 데이터랩 API 클라이언트 ID | 트렌드 수집 시 |
 | `NAVER_CLIENT_SECRET` | 네이버 데이터랩 API 클라이언트 시크릿 | 트렌드 수집 시 |
+| `NAVER_SEARCHAD_CUSTOMER_ID` | 네이버 검색광고 API 고객 ID (숫자) | 월간 검색수 사용 시 |
+| `NAVER_SEARCHAD_API_KEY` | 네이버 검색광고 API Access License | 월간 검색수 사용 시 |
+| `NAVER_SEARCHAD_SECRET_KEY` | 네이버 검색광고 API Secret Key | 월간 검색수 사용 시 |
 
 > `GA4_MEASUREMENT_ID` 미설정 시 GA4 기능 전체가 조용히 비활성화되며, 앱은 정상 동작합니다.
 

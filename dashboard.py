@@ -20,6 +20,7 @@ import analytics
 import linkedin_tab
 import instagram_tab
 import monitoring_review_store as mrs
+import naver_searchad as _nsa
 from monitoring_tab_helpers import (
     today_kst, monitoring_config_version,
     apply_category_filter, count_by_category, make_widget_key,
@@ -674,6 +675,12 @@ def _fetch_news_keywords_cached():
 def _fetch_temp_trends_cached(keywords_tuple: tuple, ref_keyword: str):
     from collector import fetch_trends_temp
     return fetch_trends_temp(keywords_tuple, ref_keyword)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _fetch_searchvol_cached(keywords_tuple: tuple) -> dict:
+    """네이버 검색광고 API — 키워드별 월간 검색수 (24h 캐시)."""
+    return _nsa.fetch_monthly_searchvol(list(keywords_tuple))
 
 
 # ══════════════════════════════════════════════════════════
@@ -1978,8 +1985,20 @@ with tab2:
                     _perf_map = _get_hashtag_perf_map()
                 except Exception:
                     _perf_map = {}
+
+                # 네이버 검색량 조회 (설정된 경우만)
+                _ht_kw_list = [_hc["kw"] for _hc in _ht_candidates]
+                _ht_svol: dict = {}
+                if _nsa.is_configured():
+                    try:
+                        _ht_svol = _fetch_searchvol_cached(tuple(_ht_kw_list))
+                    except Exception:
+                        _ht_svol = {}
+
                 for _hc in _ht_candidates:
                     _hc["우리 계정 실적"] = _fmt_perf(_hc["kw"], _ht_ch_r, _perf_map)
+                    if _nsa.is_configured():
+                        _hc["네이버 월간 검색수"] = _nsa.fmt_searchvol(_ht_svol, _hc["kw"])
 
                 _ht_df_show = pd.DataFrame(_ht_candidates).rename(columns={
                     "kw":       "키워드",
@@ -1989,19 +2008,22 @@ with tab2:
                     "category": "용도",
                     "source":   "출처",
                 })
+                _ht_col_cfg = {
+                    "키워드":       st.column_config.TextColumn(width="medium"),
+                    "관심도":       st.column_config.NumberColumn(format="%.1f", width="small"),
+                    "추세":         st.column_config.TextColumn(width="small"),
+                    "경고":         st.column_config.TextColumn(width="large"),
+                    "용도":         st.column_config.TextColumn(width="medium"),
+                    "우리 계정 실적": st.column_config.TextColumn(width="medium"),
+                    "출처":         st.column_config.TextColumn(width="medium"),
+                }
+                if _nsa.is_configured():
+                    _ht_col_cfg["네이버 월간 검색수"] = st.column_config.TextColumn(width="medium")
                 st.dataframe(
                     _ht_df_show.sort_values("관심도", ascending=False),
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "키워드":       st.column_config.TextColumn(width="medium"),
-                        "관심도":       st.column_config.NumberColumn(format="%.1f", width="small"),
-                        "추세":         st.column_config.TextColumn(width="small"),
-                        "경고":         st.column_config.TextColumn(width="large"),
-                        "용도":         st.column_config.TextColumn(width="medium"),
-                        "우리 계정 실적": st.column_config.TextColumn(width="medium"),
-                        "출처":         st.column_config.TextColumn(width="medium"),
-                    },
+                    column_config=_ht_col_cfg,
                 )
 
                 # ── 추천 조합 ─────────────────────────
@@ -2249,6 +2271,14 @@ with tab2:
             else:
                 st.info("표시할 데이터가 없습니다.")
 
+            # ── 네이버 월간 검색수 (설정된 경우) ──────
+            _svol_map: dict = {}
+            if _nsa.is_configured():
+                try:
+                    _svol_map = _fetch_searchvol_cached(tuple(_r_kws))
+                except Exception:
+                    _svol_map = {}
+
             # ── 뉴스 키워드 집합 (배지용) ─────────────
             _news_set_tmp: set = set()
             _news_data_t3 = st.session_state.get("t3_news_kws")
@@ -2291,10 +2321,16 @@ with tab2:
                             f"{_badge_html}</div>",
                             unsafe_allow_html=True,
                         )
+                        _svol_str = _nsa.fmt_searchvol(_svol_map, _kw) if _nsa.is_configured() else None
+                        _svol_line = (
+                            f"네이버 월간 검색: <strong>{_svol_str}</strong><br>"
+                            if _svol_str else ""
+                        )
                         st.markdown(
                             f"<div style='font-size:11.5px;color:#667085;line-height:1.8'>"
                             f"구글 정규화 관심도: <strong>{_g_cur}</strong><br>"
-                            f"네이버 관심도: <strong>{_n_cur}</strong></div>",
+                            f"네이버 관심도: <strong>{_n_cur}</strong><br>"
+                            f"{_svol_line}</div>",
                             unsafe_allow_html=True,
                         )
                         # 동음이의 제안 버튼
