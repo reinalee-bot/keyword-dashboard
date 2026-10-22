@@ -308,5 +308,128 @@ def collect_single_keyword(keyword: str) -> tuple:
     return naver_ok, google_ok
 
 
+# ══════════════════════════════════════════════
+# 임시 비교용 수집 (trends.csv 비저장, 세션 전용)
+# ══════════════════════════════════════════════
+def fetch_trends_temp(
+    keywords_tuple: tuple,
+    ref_keyword: str = "생성형AI",
+) -> tuple:
+    """
+    임시 키워드 비교 전용 수집 — trends.csv 에 저장하지 않는다.
+    Google 트렌드는 ref_keyword 기준 정규화 (ratio_norm 컬럼 추가).
+    반환: (df_trends, related_dict, google_error_msg)
+      df_trends  cols : keyword, date, ratio, ratio_norm, source, collected_at
+      related_dict     : {kw: {"top": DataFrame|None, "rising": DataFrame|None}}
+      google_error_msg : "" = 정상, 문자열 = 오류 메시지
+    """
+    now_str  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    user_kws = list(keywords_tuple)
+
+    # ── 네이버 ───────────────────────────────────────────────
+    naver_records = []
+    if CLIENT_ID and CLIENT_SECRET:
+        try:
+            end_dt   = datetime.today()
+            start_dt = end_dt - timedelta(days=90)
+            s_str, e_str = start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
+            for i in range(0, len(user_kws), BATCH):
+                batch   = user_kws[i:i + BATCH]
+                results = _naver_fetch_batch(batch, s_str, e_str)
+                for r in results:
+                    for pt in r.get("data", []):
+                        naver_records.append({
+                            "keyword":      r["title"],
+                            "date":         str(pt["period"])[:10],
+                            "ratio":        float(pt["ratio"]),
+                            "ratio_norm":   float(pt["ratio"]),   # 네이버: 배치 내 상대값 그대로
+                            "source":       "naver",
+                            "collected_at": now_str,
+                        })
+                if i + BATCH < len(user_kws):
+                    time.sleep(0.5)
+        except Exception:
+            pass  # 네이버 실패는 조용히 처리
+
+    # ── 구글 ────────────────────────────────────────────────
+    google_records = []
+    related_dict   = {kw: {"top": None, "rising": None} for kw in user_kws}
+    google_err     = ""
+
+    try:
+        from pytrends.request import TrendReq
+        pytrends = TrendReq(hl="ko-KR", tz=540, timeout=(10, 25), retries=1, backoff_factor=1.0)
+
+        # ref_keyword 를 배치에 포함 (중복 방지, 최대 5개)
+        if ref_keyword in user_kws:
+            payload = user_kws[:5]
+        else:
+            payload = ([ref_keyword] + user_kws)[:5]
+
+        pytrends.build_payload(payload, timeframe="today 3-m", geo="KR")
+        time.sleep(0.5)
+
+        df_iot = pytrends.interest_over_time()
+        if "isPartial" in df_iot.columns:
+            df_iot = df_iot.drop(columns=["isPartial"])
+
+        if not df_iot.empty:
+            ref_series = df_iot[ref_keyword] if ref_keyword in df_iot.columns else None
+            for kw in user_kws:
+                if kw not in df_iot.columns:
+                    continue
+                for dt_idx, ratio in df_iot[kw].items():
+                    r_raw  = float(ratio)
+                    if ref_series is not None:
+                        ref_val = float(ref_series.get(dt_idx, 0))
+                        r_norm  = (r_raw / ref_val * 100.0) if ref_val > 0 else float("nan")
+                    else:
+                        r_norm = r_raw
+                    google_records.append({
+                        "keyword":      kw,
+                        "date":         dt_idx.strftime("%Y-%m-%d"),
+                        "ratio":        r_raw,
+                        "ratio_norm":   r_norm,
+                        "source":       "google",
+                        "collected_at": now_str,
+                    })
+
+        time.sleep(1.0)
+
+        # 관련 검색어 (별도 요청, 실패해도 비치명적)
+        try:
+            rq = pytrends.related_queries()
+            for kw in user_kws:
+                if kw not in rq:
+                    continue
+                top_df    = rq[kw].get("top")
+                rising_df = rq[kw].get("rising")
+                related_dict[kw] = {
+                    "top":    top_df.head(10)    if top_df    is not None and not top_df.empty    else None,
+                    "rising": rising_df.head(10) if rising_df is not None and not rising_df.empty else None,
+                }
+        except Exception:
+            pass
+
+    except Exception as e:
+        msg = str(e)
+        if "429" in msg or "Too Many Requests" in msg:
+            google_err = "구글이 일시적으로 요청을 막았습니다 (429). 30분 후 다시 시도해 주세요."
+        elif "timeout" in msg.lower():
+            google_err = "구글 응답 시간 초과. 잠시 후 다시 시도해 주세요."
+        else:
+            google_err = f"구글 데이터를 가져오지 못했습니다. ({msg[:80]})"
+
+    # ── 결합 ────────────────────────────────────────────────
+    all_records = naver_records + google_records
+    if all_records:
+        df = pd.DataFrame(all_records)
+        df["date"] = pd.to_datetime(df["date"])
+    else:
+        df = pd.DataFrame(columns=["keyword", "date", "ratio", "ratio_norm", "source", "collected_at"])
+
+    return df, related_dict, google_err
+
+
 if __name__ == "__main__":
     collect_all()

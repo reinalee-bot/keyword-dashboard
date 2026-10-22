@@ -28,7 +28,7 @@ from monitoring_tab_helpers import (
 )
 
 # ── 상수 ──────────────────────────────────────────────────
-BUILD_VERSION = "2026-07-06-KEYWORD-V7"
+BUILD_VERSION = "2026-10-22-KEYWORD-V8"
 
 BASE_DIR    = os.path.dirname(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "data")
@@ -668,6 +668,15 @@ def _fetch_news_keywords_cached():
 
 
 # ══════════════════════════════════════════════════════════
+# 임시 비교 캐시 (30분 재사용 — 같은 키워드셋·기준 키워드)
+# ══════════════════════════════════════════════════════════
+@st.cache_data(ttl=1800, show_spinner=False)
+def _fetch_temp_trends_cached(keywords_tuple: tuple, ref_keyword: str):
+    from collector import fetch_trends_temp
+    return fetch_trends_temp(keywords_tuple, ref_keyword)
+
+
+# ══════════════════════════════════════════════════════════
 # 검토 내역 캐시 (Google Sheets rerun마다 재조회 방지)
 # ══════════════════════════════════════════════════════════
 @st.cache_data(ttl=60, show_spinner=False)
@@ -758,6 +767,113 @@ def _sparkline(series, color="#2F6BFF"):
                       xaxis=dict(visible=False,fixedrange=True),
                       yaxis=dict(visible=False,fixedrange=True))
     return fig
+
+# ══════════════════════════════════════════════════════════
+# 임시 비교 — 경고 배지 헬퍼
+# ══════════════════════════════════════════════════════════
+import re as _re
+
+def _compute_warning_badges(kw: str, df_kw: pd.DataFrame, news_kws_set: set,
+                             spike_ratio: float, low_interest: int) -> list:
+    """키워드별 경고 배지 리스트를 반환한다. df_kw 는 해당 키워드의 전체(90일) 임시 데이터."""
+    badges = []
+
+    # ── 배지 1: 뉴스성 급등 ──────────────────────────────
+    for src, norm_col in [("naver", "ratio"), ("google", "ratio_norm")]:
+        src_df = df_kw[df_kw["source"] == src].sort_values("date") if not df_kw.empty else pd.DataFrame()
+        if len(src_df) < 8:
+            continue
+        col = norm_col if norm_col in src_df.columns else "ratio"
+        vals = pd.to_numeric(src_df[col], errors="coerce").dropna()
+        if len(vals) < 8:
+            continue
+        recent7 = float(vals.iloc[-7:].mean())
+        avg4w   = float(vals.iloc[-28:].mean()) if len(vals) >= 28 else float(vals.mean())
+        if avg4w > 0 and (recent7 / avg4w) >= spike_ratio:
+            src_lbl = "네이버" if src == "naver" else "구글"
+            news_ok = kw in news_kws_set
+            tip = (f"{src_lbl}: 최근 7일 평균 {recent7:.1f}, 4주 평균 {avg4w:.1f} "
+                   f"({recent7/avg4w:.1f}배 급등). "
+                   + ("뉴스 급증 확인됨." if news_ok
+                      else "뉴스 데이터 미수집 — '급상승 키워드 탐색'을 실행하면 추가 확인 가능합니다."))
+            badges.append({"type": "news_spike", "label": "⚠ 뉴스성 급등 — 해시태그 사용 주의",
+                           "tip": tip, "color": "#FEF3C7", "text": "#92400E"})
+            break
+
+    # ── 배지 2: 동음이의 혼재 ────────────────────────────
+    if _re.match(r'^[A-Za-z][a-zA-Z]*$', kw.strip()):
+        tip = (f"'{kw}'는 영문 단일 단어로, 브랜드·서비스 검색량에 "
+               f"일반 단어 의미('합의', '동의' 등)로 검색된 결과가 혼재할 수 있습니다.")
+        badges.append({"type": "ambiguous", "label": "ⓘ 일반 단어와 혼재 가능",
+                       "tip": tip, "color": "#EFF6FF", "text": "#1e40af",
+                       "suggest": [f"{kw} AI", f"{kw} 논문", f"{kw} 서비스"]})
+
+    # ── 배지 3: 검색 관심 거의 없음 ──────────────────────
+    if not df_kw.empty:
+        norm_col = "ratio_norm" if "ratio_norm" in df_kw.columns else "ratio"
+        avg90 = float(pd.to_numeric(df_kw[norm_col], errors="coerce").mean())
+    else:
+        avg90 = 0.0
+    if df_kw.empty or (not np.isnan(avg90) and avg90 < low_interest):
+        tip = f"90일 평균 관심도 {avg90:.1f} (기준: {low_interest} 미만)"
+        badges.append({"type": "low_interest", "label": "○ 검색 관심 거의 없음",
+                       "tip": tip, "color": "#F1F5F9", "text": "#475569"})
+
+    return badges
+
+
+def _warning_badge_html(badge: dict) -> str:
+    return (f"<span title='{badge['tip']}' "
+            f"style='display:inline-block;background:{badge['color']};color:{badge['text']};"
+            f"border-radius:20px;padding:2px 10px;font-size:11px;font-weight:700;"
+            f"margin-left:6px;cursor:help'>{badge['label']}</span>")
+
+
+def _pool_upsert(pool: list, kw: str, df_tmp: pd.DataFrame, badges: list, ref_kw: str) -> None:
+    """세션 풀에 키워드를 추가하거나 최신 값으로 업데이트한다 (in-place)."""
+    kw_df = df_tmp[df_tmp["keyword"] == kw] if not df_tmp.empty else pd.DataFrame()
+
+    def _avg(sub, col):
+        if sub.empty or col not in sub.columns:
+            return float("nan")
+        return round(float(pd.to_numeric(sub[col], errors="coerce").mean()), 1)
+
+    def _last(sub, col):
+        if sub.empty or col not in sub.columns:
+            return float("nan")
+        v = pd.to_numeric(sub[col], errors="coerce").dropna()
+        return round(float(v.iloc[-1]), 1) if len(v) else float("nan")
+
+    g_df = kw_df[kw_df["source"] == "google"].sort_values("date")
+    n_df = kw_df[kw_df["source"] == "naver"].sort_values("date")
+    norm = "ratio_norm" if "ratio_norm" in g_df.columns else "ratio"
+
+    # 추세 레이블
+    use_df = (g_df.assign(ratio=pd.to_numeric(g_df[norm], errors="coerce"))
+              if not g_df.empty else
+              n_df.assign(ratio=pd.to_numeric(n_df["ratio"], errors="coerce")))
+    stats = compute_kw_stats(use_df) if not use_df.empty else {}
+    trend_lbl = stats.get("trend_label", "—")
+
+    badge_labels = ", ".join(b["label"] for b in badges) if badges else "—"
+
+    entry = {
+        "keyword":          kw,
+        "google_norm_avg":  _avg(g_df, norm),
+        "google_norm_curr": _last(g_df, norm),
+        "naver_avg":        _avg(n_df, "ratio"),
+        "naver_curr":       _last(n_df, "ratio"),
+        "trend_label":      trend_lbl,
+        "badges":           badge_labels,
+        "added_at":         datetime.now().strftime("%H:%M"),
+        "ref_keyword":      ref_kw,
+    }
+    for i, existing in enumerate(pool):
+        if existing["keyword"] == kw:
+            pool[i] = entry
+            return
+    pool.append(entry)
+
 
 def _render_monthly_table(df):
     if df.empty: st.info("집계할 데이터가 없습니다."); return
@@ -1503,6 +1619,352 @@ with tab2:
                                             _inv_derived(); st.rerun()
                                 else: st.caption("도출됨")
                         st.markdown("<hr style='margin:2px 0;border-color:#F7F9FC'>",unsafe_allow_html=True)
+
+        # ══════════════════════════════════════════════
+        # 임시 키워드 비교
+        # ══════════════════════════════════════════════
+        st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
+        st.markdown("""<div class="sh-main">
+<div class="t">임시 키워드 비교
+  <span style='font-weight:400;font-size:.82rem;color:#667085'>&nbsp;· 저장하지 않고 바로 비교</span>
+</div>
+<div class="s">최대 4개 키워드를 입력해 구글·네이버 트렌드를 즉시 비교합니다. 결과는 세션 종료 시 사라집니다.</div>
+</div>""", unsafe_allow_html=True)
+
+        # ── 세션 상태 초기화 ─────────────────────────
+        for _k, _v in [
+            ("t2_tmp_inputs",    ["", "", "", ""]),
+            ("t2_tmp_result",    None),
+            ("t2_tmp_days",      90),
+            ("t2_tmp_src",       "전체"),
+            ("t2_kw_pool",       []),
+            ("t2_ref_keyword",   "생성형AI"),
+            ("t2_spike_ratio",   2.5),
+            ("t2_low_interest",  5),
+        ]:
+            if _k not in st.session_state:
+                st.session_state[_k] = _v
+
+        # ── 설정 (접힘) ──────────────────────────────
+        if collapsible_header("⚙ 비교 설정", "t2_tmp_settings"):
+            _sc1, _sc2, _sc3 = st.columns([2, 1.5, 1.5])
+            with _sc1:
+                _new_ref = st.text_input(
+                    "정규화 기준 키워드 (구글 트렌드)",
+                    value=st.session_state["t2_ref_keyword"],
+                    key="t2_ref_input",
+                    help="구글 트렌드 값은 이 키워드 대비 상대값으로 정규화됩니다. 비교 대상보다 인지도가 높은 키워드를 입력하세요.",
+                )
+                if _new_ref.strip() and _new_ref.strip() != st.session_state["t2_ref_keyword"]:
+                    st.session_state["t2_ref_keyword"] = _new_ref.strip()
+                    st.session_state["t2_tmp_result"] = None
+            with _sc2:
+                st.session_state["t2_spike_ratio"] = st.slider(
+                    "뉴스성 급등 배수 기준",
+                    min_value=1.5, max_value=5.0, step=0.5,
+                    value=float(st.session_state["t2_spike_ratio"]),
+                    key="t2_spike_slider",
+                    help="최근 7일 평균 ÷ 4주 평균이 이 값 이상이면 '뉴스성 급등' 배지를 표시합니다.",
+                )
+            with _sc3:
+                st.session_state["t2_low_interest"] = st.number_input(
+                    "저관심 기준 (0~100)",
+                    min_value=1, max_value=30,
+                    value=int(st.session_state["t2_low_interest"]),
+                    key="t2_low_input",
+                    help="90일 평균 정규화 관심도가 이 값 미만이면 '검색 관심 거의 없음' 배지를 표시합니다.",
+                )
+            if st.button("🗑 키워드 후보 풀 초기화", key="t2_pool_clear_top", type="secondary"):
+                st.session_state["t2_kw_pool"] = []
+                st.rerun()
+
+        # ── 키워드 입력 ──────────────────────────────
+        _inp_cols = st.columns(4, gap="small")
+        for _i, _col in enumerate(_inp_cols):
+            with _col:
+                _val = st.text_input(
+                    f"키워드 {_i+1}",
+                    value=st.session_state["t2_tmp_inputs"][_i],
+                    key=f"t2_tmp_kw_{_i}",
+                    placeholder=f"키워드 {_i+1}",
+                    label_visibility="collapsed",
+                )
+                st.session_state["t2_tmp_inputs"][_i] = _val.strip()
+
+        # ── 기간·소스·실행 ────────────────────────────
+        _ctl_a, _ctl_b, _ctl_c = st.columns([2, 2, 1.5])
+        with _ctl_a:
+            _days_map = {"7일": 7, "30일": 30, "90일": 90}
+            _days_sel = st.radio(
+                "기간", list(_days_map.keys()),
+                index=list(_days_map.values()).index(st.session_state["t2_tmp_days"]),
+                horizontal=True, key="t2_days_radio",
+            )
+            st.session_state["t2_tmp_days"] = _days_map[_days_sel]
+        with _ctl_b:
+            _src_sel = st.radio(
+                "소스", ["전체", "구글 트렌드", "네이버 데이터랩"],
+                index=["전체", "구글 트렌드", "네이버 데이터랩"].index(st.session_state["t2_tmp_src"]),
+                horizontal=True, key="t2_src_radio",
+            )
+            st.session_state["t2_tmp_src"] = _src_sel
+        with _ctl_c:
+            st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
+            _run_btn = st.button("🔍 비교 시작", type="primary", use_container_width=True, key="t2_run_btn")
+
+        if _run_btn:
+            _kws_clean = [k for k in st.session_state["t2_tmp_inputs"] if k]
+            if not _kws_clean:
+                st.warning("비교할 키워드를 하나 이상 입력하세요.")
+            else:
+                with st.spinner(f"'{', '.join(_kws_clean)}' 트렌드 수집 중…"):
+                    _df_t, _rel_d, _gerr = _fetch_temp_trends_cached(
+                        tuple(_kws_clean),
+                        st.session_state["t2_ref_keyword"],
+                    )
+                st.session_state["t2_tmp_result"] = {
+                    "df":      _df_t,
+                    "related": _rel_d,
+                    "g_err":   _gerr,
+                    "kws":     _kws_clean,
+                    "days":    st.session_state["t2_tmp_days"],
+                    "src":     st.session_state["t2_tmp_src"],
+                    "ref":     st.session_state["t2_ref_keyword"],
+                }
+
+        _res = st.session_state["t2_tmp_result"]
+        if _res is not None:
+            _r_df: pd.DataFrame = _res["df"]
+            _r_rel: dict        = _res["related"]
+            _r_err: str         = _res["g_err"]
+            _r_kws: list        = _res["kws"]
+            _r_days: int        = _res["days"]
+            _r_src: str         = _res["src"]
+            _r_ref: str         = _res["ref"]
+
+            # 오류 배너
+            if _r_err:
+                st.warning(f"구글 트렌드 오류: {_r_err}")
+
+            # 방법론 안내
+            st.caption(
+                f"구글 트렌드 값은 '{_r_ref}' 대비 상대값(정규화 관심도)으로 환산됩니다. "
+                "저검색량 키워드는 0이 자주 나타날 수 있습니다."
+            )
+
+            # 기간 필터
+            if not _r_df.empty and "date" in _r_df.columns:
+                _r_df["date"] = pd.to_datetime(_r_df["date"], errors="coerce")
+                _cutoff = pd.Timestamp.now() - pd.Timedelta(days=_r_days)
+                _r_df_period = _r_df[_r_df["date"] >= _cutoff].copy()
+            else:
+                _r_df_period = _r_df.copy() if not _r_df.empty else pd.DataFrame()
+
+            # 소스 필터
+            _src_key_map = {"전체": None, "구글 트렌드": "google", "네이버 데이터랩": "naver"}
+            _src_filter = _src_key_map.get(_r_src)
+            if _src_filter and not _r_df_period.empty and "source" in _r_df_period.columns:
+                _r_df_vis = _r_df_period[_r_df_period["source"] == _src_filter].copy()
+            else:
+                _r_df_vis = _r_df_period.copy()
+
+            # ── 통합 선 차트 ─────────────────────────
+            if not _r_df_vis.empty:
+                _palette = ["#3B82F6","#10B981","#F59E0B","#EF4444"]
+                _fig_cmp = go.Figure()
+                _y_label = "정규화 관심도" if _src_filter == "google" else "관심도"
+                for _ci, _kw in enumerate(_r_kws):
+                    _kdf = _r_df_vis[_r_df_vis["keyword"] == _kw].sort_values("date")
+                    if _kdf.empty:
+                        continue
+                    for _src_name, _col_name, _dash in [
+                        ("google", "ratio_norm", "solid"),
+                        ("naver",  "ratio",      "dot"),
+                    ]:
+                        _sdf = _kdf[_kdf["source"] == _src_name] if "source" in _kdf.columns else pd.DataFrame()
+                        if _sdf.empty:
+                            continue
+                        _col_n = _col_name if _col_name in _sdf.columns else "ratio"
+                        _src_lbl = "구글" if _src_name == "google" else "네이버"
+                        _fig_cmp.add_trace(go.Scatter(
+                            x=_sdf["date"],
+                            y=pd.to_numeric(_sdf[_col_n], errors="coerce"),
+                            mode="lines",
+                            name=f"{_kw} ({_src_lbl})",
+                            line={"color": _palette[_ci % len(_palette)], "dash": _dash, "width": 2},
+                            hovertemplate="%{x|%Y-%m-%d}<br>" + _kw + f" ({_src_lbl}): %{{y:.1f}}<extra></extra>",
+                        ))
+                _fig_cmp.update_layout(
+                    height=280,
+                    margin={"t": 10, "b": 30, "l": 40, "r": 10},
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    legend={"orientation": "h", "y": -0.18, "font": {"size": 11}},
+                    yaxis_title=_y_label,
+                    xaxis={"gridcolor": "#F1F5F9"},
+                    yaxis={"gridcolor": "#F1F5F9"},
+                )
+                _cmp_key = "t2_cmp_" + hashlib.md5(",".join(_r_kws).encode()).hexdigest()[:8]
+                st.plotly_chart(_fig_cmp, use_container_width=True,
+                                config={"displayModeBar": False}, key=_cmp_key)
+            else:
+                st.info("표시할 데이터가 없습니다.")
+
+            # ── 뉴스 키워드 집합 (배지용) ─────────────
+            _news_set_tmp: set = set()
+            _news_data_t3 = st.session_state.get("t3_news_kws")
+            if _news_data_t3:
+                _news_set_tmp = {w for w, _ in _news_data_t3[0]}
+
+            # ── 키워드별 요약 카드 ───────────────────
+            _card_cols = st.columns(len(_r_kws), gap="small") if _r_kws else []
+            for _ci, (_kw, _ccol) in enumerate(zip(_r_kws, _card_cols)):
+                _kw_df_all  = _r_df[_r_df["keyword"] == _kw] if not _r_df.empty else pd.DataFrame()
+                _kw_df_per  = _r_df_period[_r_df_period["keyword"] == _kw] if not _r_df_period.empty else pd.DataFrame()
+                _badges     = _compute_warning_badges(
+                    _kw, _kw_df_all, _news_set_tmp,
+                    float(st.session_state["t2_spike_ratio"]),
+                    int(st.session_state["t2_low_interest"]),
+                )
+                _pool_upsert(st.session_state["t2_kw_pool"], _kw, _r_df, _badges, _r_ref)
+
+                _badge_html = "".join(_warning_badge_html(b) for b in _badges)
+                _g_df = _kw_df_per[_kw_df_per["source"] == "google"].sort_values("date") if not _kw_df_per.empty else pd.DataFrame()
+                _n_df = _kw_df_per[_kw_df_per["source"] == "naver"].sort_values("date")  if not _kw_df_per.empty else pd.DataFrame()
+                _norm_c = "ratio_norm" if "ratio_norm" in _g_df.columns else "ratio"
+
+                def _fmt_val(df, col):
+                    if df.empty or col not in df.columns:
+                        return "—"
+                    v = pd.to_numeric(df[col], errors="coerce").dropna()
+                    return f"{v.iloc[-1]:.1f}" if len(v) else "—"
+
+                _g_cur = _fmt_val(_g_df, _norm_c)
+                _n_cur = _fmt_val(_n_df, "ratio")
+
+                _tracked_set_tmp = set(load_tracked_keywords())
+                _is_tracked = _kw in _tracked_set_tmp
+
+                with _ccol:
+                    with st.container(border=True):
+                        st.markdown(
+                            f"<div style='font-size:.97rem;font-weight:700;margin-bottom:4px'>{_kw}"
+                            f"{_badge_html}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            f"<div style='font-size:11.5px;color:#667085;line-height:1.8'>"
+                            f"구글 정규화 관심도: <strong>{_g_cur}</strong><br>"
+                            f"네이버 관심도: <strong>{_n_cur}</strong></div>",
+                            unsafe_allow_html=True,
+                        )
+                        # 동음이의 제안 버튼
+                        for _b in _badges:
+                            if _b.get("type") == "ambiguous":
+                                for _sug in _b.get("suggest", []):
+                                    if st.button(f"🔍 {_sug}", key=f"t2_sug_{_kw}_{_sug}", use_container_width=True, type="secondary"):
+                                        _empty = next((i for i, v in enumerate(st.session_state["t2_tmp_inputs"]) if not v), None)
+                                        if _empty is not None:
+                                            st.session_state["t2_tmp_inputs"][_empty] = _sug
+                                        else:
+                                            st.warning("입력란이 모두 찼습니다. 키워드를 지운 뒤 추가하세요.")
+                        # 추적 버튼
+                        if _is_tracked:
+                            st.markdown("<span style='color:#059669;font-size:12px;font-weight:600'>📌 추적 중</span>", unsafe_allow_html=True)
+                        else:
+                            if st.button("📌 추적 목록에 추가", key=f"t2_track_{_kw}", use_container_width=True, type="secondary"):
+                                add_tracked_keyword(_kw)
+                                with st.spinner("수집 중…"):
+                                    collect_single_keyword(_kw)
+                                    _persist_trends_to_gh(_kw)
+                                    load_trends.clear()
+                                st.rerun()
+
+            # ── 관련 검색어 ──────────────────────────
+            if _r_rel:
+                st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
+                if collapsible_header("관련 검색어 (구글 트렌드)", "t2_related_exp"):
+                    for _kw in _r_kws:
+                        _kw_rel = _r_rel.get(_kw, {})
+                        _top_df   = _kw_rel.get("top")
+                        _rising_df = _kw_rel.get("rising")
+                        if _top_df is None and _rising_df is None:
+                            continue
+                        st.markdown(f"**{_kw}**", unsafe_allow_html=False)
+                        _rc1, _rc2 = st.columns(2, gap="small")
+                        with _rc1:
+                            st.markdown("<span style='font-size:12px;font-weight:600;color:#475569'>Top 10</span>", unsafe_allow_html=True)
+                            if _top_df is not None and not _top_df.empty:
+                                _show_top = _top_df.head(10)
+                                for _, _row in _show_top.iterrows():
+                                    _q = str(_row.get("query", ""))
+                                    _v = _row.get("value", "")
+                                    _rr1, _rr2, _rr3 = st.columns([3, 1, 1])
+                                    _rr1.caption(_q)
+                                    _rr2.caption(str(_v))
+                                    with _rr3:
+                                        if st.button("＋", key=f"t2_rel_top_{_kw}_{_q}", help=f"'{_q}' 를 입력란에 추가"):
+                                            _empty2 = next((i for i, v in enumerate(st.session_state["t2_tmp_inputs"]) if not v), None)
+                                            if _empty2 is not None:
+                                                st.session_state["t2_tmp_inputs"][_empty2] = _q
+                                                st.rerun()
+                                            else:
+                                                st.warning("입력란이 모두 찼습니다 (최대 4개).")
+                            else:
+                                st.caption("데이터 없음")
+                        with _rc2:
+                            st.markdown("<span style='font-size:12px;font-weight:600;color:#475569'>Rising 10</span>", unsafe_allow_html=True)
+                            if _rising_df is not None and not _rising_df.empty:
+                                _show_ris = _rising_df.head(10)
+                                for _, _row in _show_ris.iterrows():
+                                    _q = str(_row.get("query", ""))
+                                    _v = _row.get("value", "")
+                                    _v_str = f"+{_v}%" if isinstance(_v, (int, float)) else str(_v)
+                                    _rr1, _rr2, _rr3 = st.columns([3, 1, 1])
+                                    _rr1.caption(_q)
+                                    _rr2.caption(_v_str)
+                                    with _rr3:
+                                        if st.button("＋", key=f"t2_rel_ris_{_kw}_{_q}", help=f"'{_q}' 를 입력란에 추가"):
+                                            _empty3 = next((i for i, v in enumerate(st.session_state["t2_tmp_inputs"]) if not v), None)
+                                            if _empty3 is not None:
+                                                st.session_state["t2_tmp_inputs"][_empty3] = _q
+                                                st.rerun()
+                                            else:
+                                                st.warning("입력란이 모두 찼습니다 (최대 4개).")
+                            else:
+                                st.caption("데이터 없음")
+                        st.markdown("<hr style='margin:6px 0;border-color:#F1F5F9'>", unsafe_allow_html=True)
+
+        # ── 키워드 후보 풀 ───────────────────────────
+        _pool = st.session_state.get("t2_kw_pool", [])
+        if _pool:
+            st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
+            if collapsible_header(f"키워드 후보 풀 ({len(_pool)}개)", "t2_pool_exp"):
+                _pool_df = pd.DataFrame(_pool)
+                _col_cfg = {
+                    "keyword":          st.column_config.TextColumn("키워드", width="medium"),
+                    "google_norm_avg":  st.column_config.NumberColumn("구글 평균", format="%.1f"),
+                    "google_norm_curr": st.column_config.NumberColumn("구글 최근", format="%.1f"),
+                    "naver_avg":        st.column_config.NumberColumn("네이버 평균", format="%.1f"),
+                    "naver_curr":       st.column_config.NumberColumn("네이버 최근", format="%.1f"),
+                    "trend_label":      st.column_config.TextColumn("추세"),
+                    "badges":           st.column_config.TextColumn("경고", width="large"),
+                    "added_at":         st.column_config.TextColumn("시각"),
+                    "ref_keyword":      st.column_config.TextColumn("기준 키워드"),
+                }
+                st.dataframe(_pool_df, use_container_width=True, hide_index=True,
+                             column_config=_col_cfg)
+                _dl_bytes = _pool_df.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    "⬇ CSV 다운로드",
+                    data=_dl_bytes,
+                    file_name=f"kw_pool_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    key="t2_pool_dl",
+                )
+                if st.button("🗑 풀 초기화", key="t2_pool_clear_btn", type="secondary"):
+                    st.session_state["t2_kw_pool"] = []
+                    st.rerun()
 
 
 # ════════════════════════════════════════════════════════
