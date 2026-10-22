@@ -875,6 +875,120 @@ def _pool_upsert(pool: list, kw: str, df_tmp: pd.DataFrame, badges: list, ref_kw
     pool.append(entry)
 
 
+# ══════════════════════════════════════════════════════════
+# 해시태그 추천 헬퍼
+# ══════════════════════════════════════════════════════════
+
+def _classify_hashtag_candidate(kw: str, value) -> str:
+    """
+    해시태그 후보의 용도를 분류한다.
+    반환값: '브랜드·서비스명' | '넓은 노출용' | '타깃 표현용'
+    """
+    # 브랜드·서비스명: 영문 대문자 시작 or 전체 대문자 2글자 이상 단어
+    if _re.match(r'^[A-Z][A-Za-z]', kw) or _re.match(r'^[A-Z]{2,}$', kw):
+        return "브랜드·서비스명"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        v = 0.0
+    if v >= 60:
+        return "넓은 노출용"
+    return "타깃 표현용"
+
+
+def _trend_4w_label(df_kw: pd.DataFrame) -> str:
+    """주제 키워드의 최근 4주 추세를 상승/유지/하락으로 반환."""
+    if df_kw.empty:
+        return "—"
+    col = "ratio_norm" if "ratio_norm" in df_kw.columns else "ratio"
+    vals = pd.to_numeric(df_kw.sort_values("date")[col], errors="coerce").dropna()
+    if len(vals) < 4:
+        return "—"
+    first_half = float(vals.iloc[:len(vals)//2].mean())
+    second_half = float(vals.iloc[len(vals)//2:].mean())
+    if first_half == 0:
+        return "—"
+    ratio = second_half / first_half
+    if ratio >= 1.10:
+        return "📈 상승"
+    if ratio <= 0.90:
+        return "📉 하락"
+    return "➡ 유지"
+
+
+def _hashtag_format(kw: str) -> str:
+    """키워드를 해시태그 문자열로 변환 (공백 제거, # 접두사)."""
+    return "#" + kw.replace(" ", "").replace("-", "")
+
+
+def _build_hashtag_combo(
+    candidates: list,          # [{"kw", "value", "trend", "badges", "category"}]
+    channel: str,              # "LinkedIn" | "Instagram"
+    include_warned: bool,
+    n_instagram: int = 7,      # 사용자 조정 가능
+) -> dict:
+    """
+    채널별 추천 해시태그 조합을 반환한다.
+
+    Instagram 해시태그 권장 수:
+    - Meta(Instagram) 공식 크리에이터 가이드(2022~현재): 3~5개 관련 태그 권장
+    - 업계 실무(Later/Hootsuite 연구, 2023~2024): 5~10개까지 도달률 유효
+    - 20~30개는 2021년 이전 방식; 현재는 오히려 도달 감소 보고 있음
+    → 본 구현 기본값: 7개 (사용자 슬라이더로 3~15 조정 가능)
+
+    LinkedIn 해시태그 권장 수:
+    - LinkedIn 공식 권장(2022~현재): 2~4개
+    - 5개 이상은 알고리즘 페널티 가능성
+    → 본 구현: 해시태그 2~4개 + 본문 삽입 키워드 1~2개
+    """
+    # 경고 배지 여부
+    def _has_warning(c):
+        return bool(c.get("badges") and c["badges"] != "—")
+
+    pool = [c for c in candidates if include_warned or not _has_warning(c)]
+    if not pool:
+        pool = candidates[:]  # 경고 없는 게 없으면 전체 사용
+
+    broad   = [c for c in pool if c["category"] == "넓은 노출용"]
+    target  = [c for c in pool if c["category"] == "타깃 표현용"]
+    brand   = [c for c in pool if c["category"] == "브랜드·서비스명"]
+
+    # 관심도 내림차순 정렬
+    def _sortval(c):
+        try: return -float(c["value"])
+        except: return 0
+    broad.sort(key=_sortval); target.sort(key=_sortval); brand.sort(key=_sortval)
+
+    if channel == "LinkedIn":
+        tags = (broad[:2] + target[:2])[:4]
+        if len(tags) < 2 and brand:
+            tags = (tags + brand)[:4]
+        inline = (target[:2] if len(target) >= 2 else (target + broad))[:2]
+        hashtags_str = " ".join(_hashtag_format(c["kw"]) for c in tags)
+        inline_str   = ", ".join(f"'{c['kw']}'" for c in inline)
+        return {
+            "hashtags": hashtags_str,
+            "inline":   inline_str,
+            "copy":     (f"[해시태그]\n{hashtags_str}\n\n"
+                         f"[본문 삽입 키워드]\n{inline_str}"),
+            "note":     f"해시태그 {len(tags)}개, 본문 키워드 {len(inline)}개",
+        }
+    else:  # Instagram
+        n = max(3, min(15, n_instagram))
+        tags = (broad[:3] + target[:n] + brand[:2])
+        seen = []; dedup = []
+        for c in tags:
+            if c["kw"] not in seen:
+                seen.append(c["kw"]); dedup.append(c)
+        tags = dedup[:n]
+        hashtags_str = " ".join(_hashtag_format(c["kw"]) for c in tags)
+        return {
+            "hashtags": hashtags_str,
+            "copy":     hashtags_str,
+            "note":     f"해시태그 {len(tags)}개 (권장 3~5개 기준, 실무 최대 10개)",
+        }
+
+
 def _render_monthly_table(df):
     if df.empty: st.info("집계할 데이터가 없습니다."); return
     def _row(r):
@@ -1619,6 +1733,248 @@ with tab2:
                                             _inv_derived(); st.rerun()
                                 else: st.caption("도출됨")
                         st.markdown("<hr style='margin:2px 0;border-color:#F7F9FC'>",unsafe_allow_html=True)
+
+        # ══════════════════════════════════════════════
+        # 해시태그 추천
+        # ══════════════════════════════════════════════
+        st.markdown("<div style='margin-top:2.5rem'></div>", unsafe_allow_html=True)
+        st.markdown("""<div class="sh-main">
+<div class="t">해시태그 추천
+  <span style='font-weight:400;font-size:.82rem;color:#667085'>&nbsp;· LinkedIn · Instagram 공용</span>
+</div>
+<div class="s">게시물 주제 키워드를 입력하면 구글 트렌드 관련 검색어 기반으로 채널별 해시태그 조합을 추천합니다.</div>
+</div>""", unsafe_allow_html=True)
+
+        # 세션 상태
+        for _hk, _hv in [
+            ("t2_ht_inputs",   ["", "", ""]),
+            ("t2_ht_channel",  "LinkedIn"),
+            ("t2_ht_result",   None),
+            ("t2_ht_incwarn",  False),
+            ("t2_ht_ref",      "생성형AI"),
+            ("t2_ht_n_ig",     7),
+        ]:
+            if _hk not in st.session_state:
+                st.session_state[_hk] = _hv
+
+        # ── 입력 ────────────────────────────────────
+        _ht_c1, _ht_c2, _ht_c3, _ht_c4, _ht_c5 = st.columns([2, 2, 2, 1.8, 1.5])
+        for _hi, _hcol in enumerate([_ht_c1, _ht_c2, _ht_c3]):
+            with _hcol:
+                _hval = st.text_input(
+                    f"주제 키워드 {_hi+1}",
+                    value=st.session_state["t2_ht_inputs"][_hi],
+                    key=f"t2_ht_kw_{_hi}",
+                    placeholder=f"주제 키워드 {_hi+1}",
+                    label_visibility="collapsed",
+                )
+                st.session_state["t2_ht_inputs"][_hi] = _hval.strip()
+
+        with _ht_c4:
+            _ht_ch = st.radio(
+                "채널",
+                ["LinkedIn", "Instagram"],
+                index=["LinkedIn", "Instagram"].index(st.session_state["t2_ht_channel"]),
+                horizontal=True,
+                key="t2_ht_ch_radio",
+            )
+            st.session_state["t2_ht_channel"] = _ht_ch
+
+        with _ht_c5:
+            st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
+            _ht_run = st.button("✨ 추천 생성", type="primary", use_container_width=True, key="t2_ht_run")
+
+        # Instagram 개수 조정 (Instagram 선택 시만 표시)
+        if st.session_state["t2_ht_channel"] == "Instagram":
+            _ig_col, _ = st.columns([2, 6])
+            with _ig_col:
+                st.session_state["t2_ht_n_ig"] = st.slider(
+                    "Instagram 해시태그 수",
+                    min_value=3, max_value=15,
+                    value=int(st.session_state["t2_ht_n_ig"]),
+                    key="t2_ht_n_ig_slider",
+                    help="Meta 공식 권장: 3~5개 / 업계 실무: 5~10개",
+                )
+
+        if _ht_run:
+            _ht_kws = [k for k in st.session_state["t2_ht_inputs"] if k]
+            if not _ht_kws:
+                st.warning("주제 키워드를 하나 이상 입력하세요.")
+            else:
+                with st.spinner(f"'{', '.join(_ht_kws)}' 관련 검색어 수집 중…"):
+                    _ht_df, _ht_rel, _ht_gerr = _fetch_temp_trends_cached(
+                        tuple(_ht_kws),
+                        st.session_state["t2_ht_ref"],
+                    )
+                st.session_state["t2_ht_result"] = {
+                    "df":      _ht_df,
+                    "related": _ht_rel,
+                    "g_err":   _ht_gerr,
+                    "kws":     _ht_kws,
+                    "channel": st.session_state["t2_ht_channel"],
+                    "ref":     st.session_state["t2_ht_ref"],
+                }
+
+        _ht_res = st.session_state.get("t2_ht_result")
+        if _ht_res is not None:
+            _ht_df_r   = _ht_res["df"]
+            _ht_rel_r  = _ht_res["related"]
+            _ht_gerr_r = _ht_res["g_err"]
+            _ht_kws_r  = _ht_res["kws"]
+            _ht_ch_r   = _ht_res["channel"]
+            _ht_ref_r  = _ht_res["ref"]
+
+            if _ht_gerr_r:
+                st.warning(f"구글 트렌드 오류: {_ht_gerr_r}")
+
+            # ── 후보 풀 구성 ─────────────────────────
+            _ht_candidates = []
+            _ht_seen = set()
+
+            # 주제 키워드 자체
+            for _hkw in _ht_kws_r:
+                if _hkw in _ht_seen:
+                    continue
+                _ht_seen.add(_hkw)
+                _hkw_df = _ht_df_r[_ht_df_r["keyword"] == _hkw] if not _ht_df_r.empty else pd.DataFrame()
+                _norm_c = "ratio_norm" if "ratio_norm" in _hkw_df.columns else "ratio"
+                _val = round(float(pd.to_numeric(
+                    _hkw_df[_norm_c], errors="coerce").mean()), 1) if not _hkw_df.empty else 0.0
+                _trend = _trend_4w_label(
+                    _hkw_df[_hkw_df["source"] == "google"].sort_values("date")
+                    if not _hkw_df.empty else pd.DataFrame()
+                )
+                _badges_h = _compute_warning_badges(
+                    _hkw, _hkw_df, set(),
+                    float(st.session_state.get("t2_spike_ratio", 2.5)),
+                    int(st.session_state.get("t2_low_interest", 5)),
+                )
+                _ht_candidates.append({
+                    "kw":       _hkw,
+                    "value":    _val,
+                    "trend":    _trend,
+                    "badges":   ", ".join(b["label"] for b in _badges_h) if _badges_h else "—",
+                    "category": _classify_hashtag_candidate(_hkw, _val),
+                    "source":   "주제 키워드",
+                })
+
+            # 관련 검색어 후보
+            for _hkw in _ht_kws_r:
+                _hkw_rel = _ht_rel_r.get(_hkw, {})
+                for _rel_type in ("top", "rising"):
+                    _rel_df = _hkw_rel.get(_rel_type)
+                    if _rel_df is None or _rel_df.empty:
+                        continue
+                    for _, _rrow in _rel_df.head(10).iterrows():
+                        _rq = str(_rrow.get("query", "")).strip()
+                        if not _rq or _rq in _ht_seen:
+                            continue
+                        _ht_seen.add(_rq)
+                        _rv = _rrow.get("value", 0)
+                        try:
+                            _rv = float(_rv)
+                        except (TypeError, ValueError):
+                            _rv = 0.0
+                        _badge_r = _compute_warning_badges(
+                            _rq, pd.DataFrame(), set(),
+                            float(st.session_state.get("t2_spike_ratio", 2.5)),
+                            int(st.session_state.get("t2_low_interest", 5)),
+                        )
+                        _ht_candidates.append({
+                            "kw":       _rq,
+                            "value":    round(_rv, 1),
+                            "trend":    "—",
+                            "badges":   ", ".join(b["label"] for b in _badge_r) if _badge_r else "—",
+                            "category": _classify_hashtag_candidate(_rq, _rv),
+                            "source":   f"관련({_rel_type}·{_hkw})",
+                        })
+
+            # ── 경고 포함 토글 ───────────────────────
+            _ht_incwarn = st.checkbox(
+                "경고 배지 키워드도 추천에 포함",
+                value=st.session_state["t2_ht_incwarn"],
+                key="t2_ht_incwarn_cb",
+            )
+            st.session_state["t2_ht_incwarn"] = _ht_incwarn
+
+            # ── 후보 표 ──────────────────────────────
+            if _ht_candidates:
+                _ht_df_show = pd.DataFrame(_ht_candidates).rename(columns={
+                    "kw":       "키워드",
+                    "value":    "관심도",
+                    "trend":    "추세",
+                    "badges":   "경고",
+                    "category": "용도",
+                    "source":   "출처",
+                })
+                st.dataframe(
+                    _ht_df_show.sort_values("관심도", ascending=False),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "키워드":  st.column_config.TextColumn(width="medium"),
+                        "관심도":  st.column_config.NumberColumn(format="%.1f", width="small"),
+                        "추세":    st.column_config.TextColumn(width="small"),
+                        "경고":    st.column_config.TextColumn(width="large"),
+                        "용도":    st.column_config.TextColumn(width="medium"),
+                        "출처":    st.column_config.TextColumn(width="medium"),
+                    },
+                )
+
+                # ── 추천 조합 ─────────────────────────
+                st.markdown("<div style='margin-top:1rem'></div>", unsafe_allow_html=True)
+                _combo = _build_hashtag_combo(
+                    _ht_candidates,
+                    _ht_ch_r,
+                    _ht_incwarn,
+                    n_instagram=int(st.session_state.get("t2_ht_n_ig", 7)),
+                )
+
+                _combo_header = (
+                    f"**{_ht_ch_r} 추천 조합** &nbsp;"
+                    f"<span style='font-size:12px;color:#667085'>{_combo['note']}</span>"
+                )
+                st.markdown(_combo_header, unsafe_allow_html=True)
+
+                if _ht_ch_r == "LinkedIn":
+                    _li_a, _li_b = st.columns(2, gap="small")
+                    with _li_a:
+                        st.markdown("<span style='font-size:12px;font-weight:600;color:#0A66C2'>해시태그</span>", unsafe_allow_html=True)
+                        st.text_area(
+                            "LinkedIn 해시태그",
+                            value=_combo["hashtags"],
+                            height=80,
+                            key="t2_ht_li_tags",
+                            label_visibility="collapsed",
+                        )
+                    with _li_b:
+                        st.markdown("<span style='font-size:12px;font-weight:600;color:#0A66C2'>본문 삽입 키워드</span>", unsafe_allow_html=True)
+                        st.text_area(
+                            "LinkedIn 본문 키워드",
+                            value=_combo.get("inline", ""),
+                            height=80,
+                            key="t2_ht_li_inline",
+                            label_visibility="collapsed",
+                        )
+                    st.text_area(
+                        "전체 복사용",
+                        value=_combo["copy"],
+                        height=120,
+                        key="t2_ht_li_copy",
+                        label_visibility="visible",
+                    )
+                else:
+                    st.markdown("<span style='font-size:12px;font-weight:600;color:#E1306C'>Instagram 해시태그</span>", unsafe_allow_html=True)
+                    st.text_area(
+                        "Instagram 해시태그",
+                        value=_combo["copy"],
+                        height=100,
+                        key="t2_ht_ig_copy",
+                        label_visibility="collapsed",
+                    )
+                    st.caption(_combo["note"])
+            else:
+                st.info("관련 검색어 데이터가 없습니다. 구글 트렌드 오류를 확인하거나 다른 키워드를 시도하세요.")
 
         # ══════════════════════════════════════════════
         # 임시 키워드 비교
